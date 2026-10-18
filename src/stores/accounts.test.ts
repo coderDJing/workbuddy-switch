@@ -199,3 +199,35 @@ describe("CodeBuddy CLI status responses from polls and switch events", () => {
     expect(store.getState().clientStatus.codebuddyCli?.activeAccountId).toBe("recovered");
   });
 });
+
+describe("login warning recovery after credit queries", () => {
+  it("removes a recovered warning without relying on desktop events", async () => {
+    store.setState({ accounts: [{ ...account("a"), needsRelogin: true, needsReloginReason: "old failure" }] });
+    api.getCreditExpiry.mockResolvedValue({ ok: true, totalRemaining: 1 });
+    api.getAccounts.mockResolvedValue({ accounts: [account("a")] });
+    await store.getState().refreshCredits(["a"]);
+    expect(store.getState().accounts[0].needsRelogin).toBe(false);
+    expect(store.getState().creditMap.a.ok).toBe(true);
+    expect(api.getAccounts).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the warning when access succeeds but renewal still fails", async () => {
+    const flagged = { ...account("a"), needsRelogin: true, needsReloginReason: "renewal failed" };
+    store.setState({ accounts: [flagged] });
+    api.getCreditExpiry.mockResolvedValue({ ok: true });
+    api.getAccounts.mockResolvedValue({ accounts: [flagged] });
+    await store.getState().refreshCredits(["a"]);
+    expect(store.getState().accounts[0].needsRelogin).toBe(true);
+    expect(store.getState().creditMap.a.ok).toBe(true);
+  });
+
+  it("preserves query results when metadata reconciliation fails", async () => {
+    store.setState({ accounts: [{ ...account("a"), needsRelogin: true }] });
+    api.getCreditExpiry.mockResolvedValue({ ok: true });
+    api.getAccounts.mockRejectedValue(new Error("busy"));
+    await store.getState().refreshCredits(["a"]);
+    expect(store.getState().creditMap.a.ok).toBe(true);
+    expect(store.getState().refreshingCredits).toBe(false);
+    expect(store.getState().accounts[0].needsRelogin).toBe(true);
+  });
+});

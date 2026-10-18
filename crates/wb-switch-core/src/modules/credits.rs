@@ -408,11 +408,15 @@ async fn post_with_account(account: &Value, url: &str, body: Value) -> Value {
     }
     let headers = resource_auth_headers(account, request_origin(url));
     let response = http_request(url, "POST", Some(body.clone()), Some(&headers)).await;
-    if is_transport_error(&response) {
+    let response = if is_transport_error(&response) {
         http_request(url, "POST", Some(body), Some(&headers)).await
     } else {
         response
+    };
+    if is_success(&response) {
+        crate::modules::refresh::recheck_relogin_after_success(account).await;
     }
+    response
 }
 
 fn request_origin(url: &str) -> &'static str {

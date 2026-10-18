@@ -243,4 +243,10 @@ async function loadCredits(accountIds: string[], force: boolean, silent: boolean
     lastCreditRefreshAt: Date.now(),
     refreshingCredits: silent ? s.refreshingCredits : force ? false : s.refreshingCredits,
   }));
+
+  // A successful query may have renewed credentials and cleared an old login
+  // warning in core. Re-read metadata for webui too, where Tauri events do not run.
+  if (useAccountsStore.getState().accounts.some((a) => a.needsRelogin && toFetch.includes(a.id))) {
+    await useAccountsStore.getState().reconcileAccounts().catch(() => {});
+  }
 }
