@@ -151,13 +151,12 @@ pub fn build_auth_obj(acc: &Value) -> Value {
             "expiresIn".to_string(),
             json!(((expires_at - now) / 1000).max(0)),
         );
-        let refresh_exp = raw
-            .and_then(|r| r.get("refreshExpiresAt"))
+        let refresh_exp = acc
+            .get("refreshExpiresAt")
             .and_then(|v| v.as_i64())
+            .or_else(|| obj.get("refreshExpiresAt").and_then(|v| v.as_i64()))
             .unwrap_or(expires_at);
-        if !obj.contains_key("refreshExpiresAt") {
-            obj.insert("refreshExpiresAt".to_string(), json!(refresh_exp));
-        }
+        obj.insert("refreshExpiresAt".to_string(), json!(refresh_exp));
         obj.insert(
             "refreshExpiresIn".to_string(),
             json!(((refresh_exp - now) / 1000).max(0)),
@@ -530,6 +529,22 @@ mod tests {
             WbVariant::Ai.backup_file_name(ts),
             "workbuddy-desktop-ai.2026-09-15T00-00-00Z.info"
         );
+    }
+
+    #[test]
+    fn auth_export_uses_current_refresh_expiry_instead_of_old_login_response() {
+        let current = now_ms() + 10 * 86_400_000_i64;
+        for raw in [
+            json!({"refreshExpiresAt":1}),
+            json!({"auth":{"refreshExpiresAt":1}}),
+        ] {
+            let auth = build_auth_obj(
+                &json!({"access_token":"current-at","refresh_token":"current-rt",
+                "expiresAt":current-86_400_000_i64,"refreshExpiresAt":current,"auth_raw":raw}),
+            );
+            assert_eq!(auth["refreshExpiresAt"], current);
+            assert!(auth["refreshExpiresIn"].as_i64().unwrap() > 0);
+        }
     }
 
     #[test]

@@ -151,6 +151,11 @@ where
                 .and_then(|v| v.as_str())
                 .unwrap_or("未知错误")
         );
+        // An unavailable gateway or network timeout says nothing about whether
+        // the saved session has been revoked. Do not persist a relogin flag.
+        if code == -1 || code == 429 || (500..600).contains(&code) {
+            return refresh_error(account, reason);
+        }
         mark_relogin(&mut account, reason);
         if let Err(error) = upsert_account_locked(&account, &guard) {
             return refresh_error(account, error.to_string());
@@ -193,25 +198,16 @@ where
     if let Some(v) = new_exp {
         account["expiresAt"] = json!(v);
     }
-    let fallback_rt_exp = norm_ts(
-        account
-            .get("auth_raw")
-            .and_then(|a| a.get("refreshExpiresAt")),
-    );
-    let mut new_rt_exp = norm_ts(
+    let new_rt_exp = norm_ts(
         data.get("refreshExpiresAt")
             .or_else(|| data.get("refresh_expires_at")),
-    );
-    if new_rt_exp.is_none() {
-        new_rt_exp = fallback_rt_exp;
-    }
-    let new_rt_exp = match new_rt_exp {
-        Some(v) => Some(v),
-        None => data
-            .get("refreshExpiresIn")
+    )
+    .or_else(|| {
+        data.get("refreshExpiresIn")
             .and_then(|v| v.as_i64())
-            .map(|e| now_ms() + e * 1000),
-    };
+            .map(|e| now_ms() + e * 1000)
+    })
+    .or_else(|| norm_ts(account.get("refreshExpiresAt")));
     if let Some(v) = new_rt_exp {
         account["refreshExpiresAt"] = json!(v);
     }
@@ -373,6 +369,8 @@ mod tests {
             "deleted",
             "healthy",
             "malformed",
+            "expiry",
+            "transient",
         ] {
             let root = std::env::temp_dir().join(format!("wb-recovery-{}", uuid::Uuid::new_v4()));
             let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -415,6 +413,31 @@ mod tests {
             .unwrap();
         runtime.block_on(async {
             match case.as_str() {
+                "expiry" => {
+                    let mut input = old.clone();
+                    input["auth_raw"] = json!({"refreshExpiresAt":1});
+                    save_accounts(&[input.clone(), other.clone()]).unwrap();
+                    let started = now_ms();
+                    let fresh = refresh_account_token_with(input, false, |_, _| async {
+                        json!({"code":0,"data":{"accessToken":"new","refreshToken":"new-rt",
+                            "expiresIn":3600,"refreshExpiresIn":7200}})
+                    })
+                    .await;
+                    assert!(fresh["refreshExpiresAt"].as_i64().unwrap() >= started + 7200000);
+                    assert_eq!(find_account("b").unwrap(), other);
+                }
+                "transient" => {
+                    let mut input = old.clone();
+                    input.as_object_mut().unwrap().remove("needs_relogin");
+                    save_accounts(&[input.clone(), other.clone()]).unwrap();
+                    let failed = refresh_account_token_with(input.clone(), false, |_, _| async {
+                        json!({"code":503,"message":"upstream unavailable"})
+                    })
+                    .await;
+                    assert!(refresh_failure(&failed).is_some());
+                    assert_eq!(find_account("a").unwrap(), input);
+                    assert_eq!(find_account("b").unwrap(), other);
+                }
                 "success" => {
                     let mut edited = old.clone();
                     edited["note"] = json!("edited during query");

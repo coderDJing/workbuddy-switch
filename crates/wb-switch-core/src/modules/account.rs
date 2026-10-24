@@ -17,6 +17,28 @@ pub fn is_envelope(v: &Value, key: &str) -> bool {
     matches!(v.get(key), Some(Value::Object(map)) if map.contains_key("$wbEncrypted"))
 }
 
+// These unverified claims only order locally collected copies of the same
+// session; they never authenticate a caller or replace server validation.
+fn older_session_credentials(existing: &Value, collected: &Value) -> bool {
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+    let claims = |account: &Value| -> Option<Value> {
+        let token = account.get("refresh_token")?.as_str()?;
+        let payload = token.split('.').nth(1)?;
+        let bytes = URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    };
+    let (Some(current), Some(incoming)) = (claims(existing), claims(collected)) else {
+        return false;
+    };
+    for key in ["sid", "sub"] {
+        if current[key].as_str().is_none_or(str::is_empty) || current[key] != incoming[key] {
+            return false;
+        }
+    }
+    matches!((current["iat"].as_i64(), incoming["iat"].as_i64()),
+        (Some(current),Some(incoming)) if incoming < current)
+}
+
 /// 是否持有未过期的明文 access_token（OAuth 扫码所得形态）。
 /// 无 expiresAt 时视为有效（保守：不因缺字段丢弃明文凭据）。
 fn has_unexpired_plain_token(acc: &Value) -> bool {
@@ -317,7 +339,9 @@ pub fn upsert_collected_account(accounts: &mut Vec<Value>, mut collected: Value)
         // 记录仍持有未过期的明文 token（OAuth 扫码所得），不得让信封覆盖明文
         // —— 否则 UI 每次自动 importLocal 都会把扫码凭据冲掉，签到/积分等
         // 需要明文 token 的功能随之失效。明文过期后才放行信封接管。
-        if is_envelope(&collected, "access_token") && has_unexpired_plain_token(existing) {
+        if (is_envelope(&collected, "access_token") && has_unexpired_plain_token(existing))
+            || older_session_credentials(existing, &collected)
+        {
             if get_str(existing, "id").is_some() {
                 return existing.clone();
             }
@@ -384,6 +408,55 @@ pub fn save_collected_account(collected: Value) -> std::io::Result<Value> {
     let saved = upsert_collected_account(&mut accounts, collected);
     save_accounts_locked(&accounts, &guard)?;
     Ok(saved)
+}
+
+/// Commit a verified QR repair only if the selected failed credentials have
+/// not changed while the user was authorizing. Other accounts are untouched.
+pub fn commit_qr_repair(expected: &Value, incoming: Value) -> Result<Value, String> {
+    let guard = crate::modules::state_lock::try_auth().map_err(|e| e.to_string())?;
+    let mut accounts = load_accounts_for_update().map_err(|e| e.to_string())?;
+    let saved = commit_qr_repair_in(&mut accounts, expected, incoming)?;
+    save_accounts_locked(&accounts, &guard).map_err(|e| e.to_string())?;
+    Ok(saved)
+}
+
+fn commit_qr_repair_in(
+    accounts: &mut Vec<Value>,
+    expected: &Value,
+    mut incoming: Value,
+) -> Result<Value, String> {
+    let id = get_str(expected, "id").ok_or("缺少待修复账号")?;
+    let current = find_account_in(accounts, &id).ok_or("待修复账号已删除")?;
+    if current["needs_relogin"] != true || expected["needs_relogin"] != true {
+        return Err("账号已恢复或原本正常，未替换凭据".into());
+    }
+    if ["access_token", "refresh_token"]
+        .iter()
+        .any(|key| current[*key] != expected[*key])
+    {
+        return Err("账号凭据已被其他进程更新，未覆盖".into());
+    }
+    if get_str(&current, "uid").is_none()
+        || current["uid"] != incoming["uid"]
+        || variant_of(&current) != variant_of(&incoming)
+    {
+        return Err("扫码账号与选定账号不一致，未替换凭据".into());
+    }
+    if get_str(&incoming, "access_token").is_none()
+        || get_str(&incoming, "refresh_token").is_none()
+        || incoming["needs_relogin"] == true
+        || incoming.get("refresh_error").is_some()
+    {
+        return Err("新登录尚未通过凭据验证".into());
+    }
+    incoming["id"] = json!(id);
+    for key in ["createdAt", "note", "displayField"] {
+        if let Some(value) = current.get(key) {
+            incoming[key] = value.clone();
+        }
+    }
+    upsert_account_in(accounts, &incoming);
+    Ok(incoming)
 }
 
 /// 按 id 覆盖；id 缺失或未命中时按 uid 回退覆盖，仍未命中则补 id 追加。
@@ -817,6 +890,87 @@ mod tests {
         assert_eq!(accounts.len(), 1);
         assert_eq!(saved["variant"], "ai");
         assert_eq!(accounts[0]["variant"], "ai");
+    }
+
+    #[test]
+    fn targeted_qr_repair_rejects_wrong_accounts_and_concurrent_changes() {
+        let old = json!({"id":"failed","uid":"u","variant":"cn","access_token":"old",
+            "refresh_token":"old-rt","needs_relogin":true,"note":"my note","createdAt":1});
+        let healthy =
+            json!({"id":"healthy","uid":"other","access_token":"keep","refresh_token":"keep-rt"});
+        let fresh = json!({"id":"candidate","uid":"u","variant":"cn","access_token":"new","refresh_token":"new-rt","createdAt":2});
+        let mut rows = vec![old.clone(), healthy.clone()];
+        for change in [
+            json!({"uid":"wrong"}),
+            json!({"variant":"ai"}),
+            json!({"refresh_token":""}),
+        ] {
+            let mut wrong = fresh.clone();
+            wrong
+                .as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+            assert!(commit_qr_repair_in(&mut rows, &old, wrong).is_err());
+            assert_eq!(rows, vec![old.clone(), healthy.clone()]);
+        }
+        for patch in [
+            json!({"needs_relogin":false}),
+            json!({"refresh_token":"changed"}),
+        ] {
+            let mut changed = old.clone();
+            changed
+                .as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            let mut rows = vec![changed.clone(), healthy.clone()];
+            assert!(commit_qr_repair_in(&mut rows, &old, fresh.clone()).is_err());
+            assert_eq!(rows, vec![changed, healthy.clone()]);
+        }
+        let result = commit_qr_repair_in(&mut rows, &old, fresh).unwrap();
+        assert_eq!(result["id"], "failed");
+        assert_eq!(result["note"], "my note");
+        assert_eq!(result["createdAt"], 1);
+        assert!(result.get("needs_relogin").is_none());
+        assert_eq!(rows[1], healthy);
+        assert_eq!(rows.len(), 2);
+    }
+
+    #[test]
+    fn collected_credentials_cannot_roll_back_a_rotated_session() {
+        use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+        let token = |session: &str, issued: i64, kind: &str| {
+            format!(
+                "e30.{}.fixture",
+                URL_SAFE_NO_PAD.encode(
+                    serde_json::to_vec(&json!({
+                        "sid":session,"sub":"subject","iat":issued,"typ":kind
+                    }))
+                    .unwrap()
+                )
+            )
+        };
+        let existing = json!({"id":"stable","uid":"uid","access_token":token("s",200,"Bearer"),
+            "refresh_token":token("s",200,"Offline"),"refreshedAt":200000,"expiresAt":9999999999999_i64,
+            "note":"preserve","createdAt":1});
+        let other = json!({"id":"other","uid":"another","access_token":"healthy","refresh_token":"healthy-rt"});
+        let mut accounts = vec![existing.clone(), other.clone()];
+        let old_import = json!({"id":"generated","uid":"uid","access_token":token("s",100,"Bearer"),
+            "refresh_token":token("s",100,"Offline"),"expiresAt":9999999999999_i64});
+        let saved = upsert_collected_account(&mut accounts, old_import);
+        assert_eq!(saved["access_token"], existing["access_token"]);
+        assert_eq!(saved["refresh_token"], existing["refresh_token"]);
+        assert_eq!(saved["refreshedAt"], existing["refreshedAt"]);
+        assert_eq!(accounts[1], other);
+        // A new QR session must remain an effective way to repair a revoked session.
+        let repaired = upsert_collected_account(
+            &mut accounts,
+            json!({"uid":"uid",
+            "access_token":token("new-session",150,"Bearer"),"refresh_token":token("new-session",150,"Offline")}),
+        );
+        assert_ne!(repaired["access_token"], existing["access_token"]);
+        assert_eq!(repaired["id"], "stable");
+        assert_eq!(repaired["note"], "preserve");
+        assert_eq!(accounts[1], other);
     }
 
     #[test]
