@@ -27,7 +27,7 @@ fn codebuddy_bundle(edition: Option<&str>) -> &'static str {
         "com.tencent.codebuddycn"
     }
 }
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 fn app_for_scheme(scheme: &str) -> Option<(&'static str, &'static str)> {
     Some(match scheme {
         "workbuddy-ai" => ("WorkBuddy AI.app", "com.workbuddy.workbuddy-ai"),

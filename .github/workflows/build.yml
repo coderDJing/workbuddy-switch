@@ -47,29 +47,7 @@ jobs:
           JS
 
   verify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-test-
-      - run: npm ci
-      - run: npm run release:check
-      - run: node --test scripts/release-artifacts.test.mjs scripts/vendor-agent-companion.test.mjs
-      - run: npm test
-      - run: cargo test -p wb-switch-core --locked
-        env:
-          WB_SWITCH_HOME: ${{ runner.temp }}/next-test-home
+    uses: ./.github/workflows/test.yml
 
   build:
     needs: [select-matrix, verify]

@@ -2080,7 +2080,9 @@ D:\Users\Zhou\AppData\Local\Programs\WorkBuddy\WorkBuddy.exe
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_ps_filter_matches_case_sensitively_and_excludes_self() {
-        let self_pid = std::process::id();
+        // This pure parser accepts the caller PID explicitly. Keep the fixture
+        // independent of the runner's real PID, which can equal a sample row.
+        let self_pid = 5000;
         // 5002 用小写目录：pgrep -f 大小写不敏感会命中，这里必须不命中。
         // 5003 全大写引用：旧的 pgrep -f 不敏感匹配的典型反例，这里必须不命中。
         // 5005 args 含 wb-switch：非自身 pid 也按自排除规则剔除。
@@ -2101,7 +2103,7 @@ D:\Users\Zhou\AppData\Local\Programs\WorkBuddy\WorkBuddy.exe
     #[cfg(target_os = "macos")]
     #[test]
     fn macos_bundle_filter_keeps_bundle_daemons_and_drops_self() {
-        let self_pid = std::process::id();
+        let self_pid = 5010;
         // 包内任意进程：主进程 + Contents/Resources 下守护 + 引用 bundle 的自家进程。
         // 5012 用小写目录名（对应字面量全小写变体）。5014 是无关 .app，不误杀。
         let stdout = format!(
