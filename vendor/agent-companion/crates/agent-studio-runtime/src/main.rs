@@ -1,15 +1,10 @@
 mod integrations;
-use integrations::install_hooks;
-use agent_studio_core::{
-    adapters::{
-        Collector,
-    },
-    atomic_json, now, text,
-};
+use agent_studio_core::{adapters::Collector, atomic_json, now, text};
 use agent_studio_runtime::{
     arg_value, call, codebuddy_edition_from_host, endpoint, home, PROTOCOL,
 };
 use fs2::FileExt;
+use integrations::install_hooks;
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, VecDeque},
@@ -30,7 +25,13 @@ fn main() {
                 let _ = std::io::stdout().flush();
             }
             if let Ok(mut p) = serde_json::from_slice::<Value>(&bytes) {
-                let codex_stop = agent == "codex" && matches!(p["hook_event_name"].as_str().or(p["hookEventName"].as_str()), Some("Stop" | "Interrupt" | "SessionEnd"));
+                let codex_stop = agent == "codex"
+                    && matches!(
+                        p["hook_event_name"]
+                            .as_str()
+                            .or(p["hookEventName"].as_str()),
+                        Some("Stop" | "Interrupt" | "SessionEnd")
+                    );
                 p["agent_source"] = json!(agent);
                 if let Some(edition) = arg_value("--edition") {
                     p["agent_edition"] = json!(edition);
@@ -45,10 +46,15 @@ fn main() {
                     // Stop expects JSON output. Report delivery failures to
                     // Codex instead of silently leaving the session running.
                     if let Err(delivery) = call(&home(), "hook", p.clone()) {
-                        match agent_studio_core::codex_recovery::record_offline_terminal(&home(), &p) {
-                            Ok(true) => {},
+                        match agent_studio_core::codex_recovery::record_offline_terminal(
+                            &home(),
+                            &p,
+                        ) {
+                            Ok(true) => {}
                             Ok(false) => return Err(delivery),
-                            Err(persist) => return Err(format!("{delivery}; 离线结束事件保存失败：{persist}")),
+                            Err(persist) => {
+                                return Err(format!("{delivery}; 离线结束事件保存失败：{persist}"))
+                            }
                         }
                     }
                     println!("{{}}");
@@ -70,7 +76,22 @@ fn main() {
         std::process::exit(1);
     }
 }
+/// Shell 引号形态（当前安装形态）。
+///
+/// Windows 上 hook 会被两类执行器拉起：CodeBuddy IDE 的 `cmd.exe`，以及
+/// CodeBuddy CLI / Codex 的 MSYS bash。`cmd` 不认 POSIX 单引号（报
+/// “文件名、目录名或卷标语法不正确”），而 bash 里反斜杠又是转义雷区。
+/// 因此 Windows 统一用**正斜杠 + 双引号**：两种执行器都能正确解析。
 fn quote_path(p: &Path) -> String {
+    if cfg!(windows) {
+        format!("\"{}\"", p.to_string_lossy().replace('\\', "/"))
+    } else {
+        format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"))
+    }
+}
+
+/// 旧版（仅 bash 兼容）的引号形态：只用于识别历史上写入过的命令，便于重装时清理。
+fn quote_path_legacy(p: &Path) -> String {
     format!("'{}'", p.to_string_lossy().replace('\'', "'\\''"))
 }
 /// One raw hook payload from a user-configured third-party tool. The source is
@@ -89,7 +110,8 @@ fn custom_hook() -> Result<(), String> {
     if bytes.len() as u64 > agent_studio_core::custom::limits::PAYLOAD_BYTES {
         return Err("载荷超过 1 MiB 上限".into());
     }
-    let raw: Value = serde_json::from_slice(&bytes).map_err(|_| "载荷必须是单个 JSON 值".to_string())?;
+    let raw: Value =
+        serde_json::from_slice(&bytes).map_err(|_| "载荷必须是单个 JSON 值".to_string())?;
     let outcome = call(
         &home(),
         "custom_hook",
@@ -104,11 +126,17 @@ fn custom_hook() -> Result<(), String> {
     }
     Ok(())
 }
-fn hook_command(binary: &Path, home: &Path, source: &str, edition: Option<&str>) -> String {
+fn hook_command_with(
+    binary: &Path,
+    home: &Path,
+    source: &str,
+    edition: Option<&str>,
+    quote: fn(&Path) -> String,
+) -> String {
     let mut command = format!(
         "{} hook --home {} --source {}",
-        quote_path(binary),
-        quote_path(home),
+        quote(binary),
+        quote(home),
         source
     );
     if let Some(edition) = edition {
@@ -116,6 +144,15 @@ fn hook_command(binary: &Path, home: &Path, source: &str, edition: Option<&str>)
         command.push_str(edition);
     }
     command
+}
+
+fn hook_command(binary: &Path, home: &Path, source: &str, edition: Option<&str>) -> String {
+    hook_command_with(binary, home, source, edition, quote_path)
+}
+
+/// 历史形态（POSIX 单引号）：Windows 上是错的，仅用于识别与清理旧安装。
+fn hook_command_legacy(binary: &Path, home: &Path, source: &str, edition: Option<&str>) -> String {
+    hook_command_with(binary, home, source, edition, quote_path_legacy)
 }
 fn ensure_hook_binary(home: &Path) -> Result<PathBuf, String> {
     let binary = std::env::current_exe().map_err(|e| e.to_string())?;
@@ -132,6 +169,9 @@ fn ensure_hook_binary(home: &Path) -> Result<PathBuf, String> {
     std::fs::rename(&temp, &hook_binary).map_err(|e| e.to_string())?;
     Ok(hook_binary)
 }
+/// 「工具开始后多久没有任何反馈」就发一条「需要确认」告警（与前端
+/// `permission-check.ts` 的阈值保持一致）。
+const PERMISSION_HINT_MS: i64 = 45_000;
 struct Notifications {
     seen: VecDeque<String>,
     initialized: bool,
@@ -170,6 +210,43 @@ impl Notifications {
             fresh.push(e.clone());
         }
         self.initialized = true;
+        // CodeBuddy IDE / VS Code 插件在弹「需要你允许」时不会发 Notification hook
+        // （实测客户端里那条链路是死代码），所以这里补一条推断：工具开始后超过阈值
+        // 仍没有任何结果，就当作「可能卡在等人确认」，产出一条 wait 告警——宿主据此
+        // 弹系统通知（含声音），这样全屏时也能收到提醒。
+        if self.initialized {
+            let time = agent_studio_core::now();
+            for session in s["sessions"].as_array().into_iter().flatten() {
+                let checks = session["permissionChecks"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                if checks.is_empty() || session["status"] != "running" || session["stale"] == true {
+                    continue;
+                }
+                for check in checks {
+                    let ts = check["ts"].as_i64().unwrap_or(time);
+                    if time - ts < PERMISSION_HINT_MS {
+                        continue;
+                    }
+                    let id = json!([session["id"], session["roundId"], "prolonged", check["id"]])
+                        .to_string();
+                    if self.seen.contains(&id) {
+                        continue;
+                    }
+                    self.seen.push_back(id.clone());
+                    fresh.push(json!({
+                        "id":id,
+                        "sessionId":session["id"],
+                        "roundId":session["roundId"],
+                        "kind":"prolonged",
+                        "ts":ts,
+                        "historical":false,
+                        "title":session["title"],
+                    }));
+                }
+            }
+        }
         while self.seen.len() > 2000 {
             self.seen.pop_front();
         }
@@ -178,19 +255,45 @@ impl Notifications {
 }
 fn ingest_hook_durably(collector: &mut Collector, payload: &Value) -> Result<Value, String> {
     let accepted = collector.ingest_hook(payload);
-    if !accepted { return Ok(json!(false)); }
-    let sid = payload["session_id"].as_str().or(payload["sessionId"].as_str()).unwrap_or("");
+    if !accepted {
+        return Ok(json!(false));
+    }
+    let sid = payload["session_id"]
+        .as_str()
+        .or(payload["sessionId"].as_str())
+        .unwrap_or("");
     let hidden_codex_child = payload["agent_source"] == "codex"
-        && collector.hub.hidden_codeg_codex_ids.contains(sid.trim_start_matches("thr_"));
+        && collector
+            .hub
+            .hidden_codeg_codex_ids
+            .contains(sid.trim_start_matches("thr_"));
     if payload["agent_source"] == "codex" {
         if !hidden_codex_child {
-            let session = collector.hub.sessions.get(&format!("codex:{sid}")).ok_or("Codex 会话状态缺失")?;
+            let session = collector
+                .hub
+                .sessions
+                .get(&format!("codex:{sid}"))
+                .ok_or("Codex 会话状态缺失")?;
             let live = collector.live.get(sid).ok_or("Codex 轮次状态缺失")?;
-            agent_studio_core::codex_recovery::save(&collector.home, &collector.settings, &collector.integrations, sid, session, live)?;
+            agent_studio_core::codex_recovery::save(
+                &collector.home,
+                &collector.settings,
+                &collector.integrations,
+                sid,
+                session,
+                live,
+            )?;
         }
     }
-    if payload["agent_source"] == "codex" && !hidden_codex_child
-        && matches!(payload["hook_event_name"].as_str().or(payload["hookEventName"].as_str()), Some("Stop" | "Interrupt" | "SessionEnd")) {
+    if payload["agent_source"] == "codex"
+        && !hidden_codex_child
+        && matches!(
+            payload["hook_event_name"]
+                .as_str()
+                .or(payload["hookEventName"].as_str()),
+            Some("Stop" | "Interrupt" | "SessionEnd")
+        )
+    {
         match agent_studio_core::codex_recovery::record_offline_terminal(&collector.home, payload) {
             Ok(true) => Ok(json!(accepted)),
             Ok(false) => Err("结束事件未被持久保存".into()),
@@ -201,9 +304,18 @@ fn ingest_hook_durably(collector: &mut Collector, payload: &Value) -> Result<Val
     }
 }
 fn collector_request_command(command: &str) -> bool {
-    matches!(command, "settings_set" | "settings_check" | "integrations_get" | "integrations_set"
-        | "custom_integrations_get" | "custom_integrations_set" | "custom_preview" | "custom_hook"
-        | "session_monitor_close")
+    matches!(
+        command,
+        "settings_set"
+            | "settings_check"
+            | "integrations_get"
+            | "integrations_set"
+            | "custom_integrations_get"
+            | "custom_integrations_set"
+            | "custom_preview"
+            | "custom_hook"
+            | "session_monitor_close"
+    )
 }
 fn serve() -> Result<(), String> {
     let home = home();
@@ -228,7 +340,7 @@ fn serve() -> Result<(), String> {
     let server = tiny_http::Server::http("127.0.0.1:0").map_err(|e| e.to_string())?;
     let port = server.server_addr().to_ip().ok_or("无效监听地址")?.port();
     let token = uuid::Uuid::new_v4().to_string();
-    let codeg_path = format!("/api/codeg-webhook/{}",uuid::Uuid::new_v4());
+    let codeg_path = format!("/api/codeg-webhook/{}", uuid::Uuid::new_v4());
     collector.configure_codeg_webhook(format!("http://127.0.0.1:{port}{codeg_path}"));
     type Job = (
         String,
@@ -236,8 +348,10 @@ fn serve() -> Result<(), String> {
         Option<std::sync::mpsc::Sender<Result<Value, String>>>,
     );
     let (jobs, receiver) = std::sync::mpsc::channel::<Job>();
-    let stream_jobs=jobs.clone();
-    collector.set_codeg_stream_sink(std::sync::Arc::new(move |frame| { let _=stream_jobs.send(("codeg_stream".into(),frame,None)); }));
+    let stream_jobs = jobs.clone();
+    collector.set_codeg_stream_sink(std::sync::Arc::new(move |frame| {
+        let _ = stream_jobs.send(("codeg_stream".into(), frame, None));
+    }));
     let (updates, changes) = std::sync::mpsc::channel::<Value>();
     let initial_settings = collector.settings.clone();
     let codeg_integrated = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(
@@ -255,7 +369,9 @@ fn serve() -> Result<(), String> {
             }
             match receiver.recv_timeout(Duration::from_millis(100)) {
                 Ok((command, payload, reply)) => {
-                    if command == "shutdown" { break; }
+                    if command == "shutdown" {
+                        break;
+                    }
                     let result = if command == "codeg_stream" {
                         Ok(json!(collector.ingest_codeg_stream(&payload)))
                     } else if command == "hook" {
@@ -266,7 +382,10 @@ fn serve() -> Result<(), String> {
                         {
                             let result = integrations::set(&mut collector, &payload);
                             // Policy is durable even when remote registration fails.
-                            worker_codeg_integrated.store(collector.integration_automatic("codeg"), std::sync::atomic::Ordering::Release);
+                            worker_codeg_integrated.store(
+                                collector.integration_automatic("codeg"),
+                                std::sync::atomic::Ordering::Release,
+                            );
                             result
                         }
                     } else {
@@ -276,7 +395,8 @@ fn serve() -> Result<(), String> {
                         let _ = install_hooks(&collector);
                         poll_at = Instant::now() - Duration::from_secs(5);
                     }
-                    if command != "codeg_stream" || result.as_ref().is_ok_and(|v|v==&json!(true)) {
+                    if command != "codeg_stream" || result.as_ref().is_ok_and(|v| v == &json!(true))
+                    {
                         let _ = updates.send(collector.hub.snapshot());
                     }
                     if let Some(reply) = reply {
@@ -353,23 +473,39 @@ fn serve() -> Result<(), String> {
         };
         // Codeg cannot supply Authorization headers; a per-runtime random URL
         // is the callback capability. It is never accepted by the RPC route.
-        if request.url() == codeg_path && request.method() == &tiny_http::Method::Post
-            && !request.headers().iter().any(|h|h.field.equiv("Origin")) {
-            if settings["sources"]["codeg"]["enabled"] != true || !codeg_integrated.load(std::sync::atomic::Ordering::Acquire) {
-                let _=request.respond(tiny_http::Response::empty(410));continue;
+        if request.url() == codeg_path
+            && request.method() == &tiny_http::Method::Post
+            && !request.headers().iter().any(|h| h.field.equiv("Origin"))
+        {
+            if settings["sources"]["codeg"]["enabled"] != true
+                || !codeg_integrated.load(std::sync::atomic::Ordering::Acquire)
+            {
+                let _ = request.respond(tiny_http::Response::empty(410));
+                continue;
             }
-            let mut body=Vec::new();
-            let _=request.as_reader().take(65537).read_to_end(&mut body);
-            let status=if body.len()>65536 {413} else {
+            let mut body = Vec::new();
+            let _ = request.as_reader().take(65537).read_to_end(&mut body);
+            let status = if body.len() > 65536 {
+                413
+            } else {
                 match serde_json::from_slice::<Value>(&body) {
-                    Ok(p) if p["source"]=="codeg" && p["connection_id"].is_string()
-                        && agent_studio_core::adapters::CODEG_EVENTS.contains(&text(&p["event"]).as_str()) => {
-                        if jobs.send(("hook".into(),p,None)).is_ok(){204}else{503}
-                    },
-                    _=>400,
+                    Ok(p)
+                        if p["source"] == "codeg"
+                            && p["connection_id"].is_string()
+                            && agent_studio_core::adapters::CODEG_EVENTS
+                                .contains(&text(&p["event"]).as_str()) =>
+                    {
+                        if jobs.send(("hook".into(), p, None)).is_ok() {
+                            204
+                        } else {
+                            503
+                        }
+                    }
+                    _ => 400,
                 }
             };
-            let _=request.respond(tiny_http::Response::empty(status));continue;
+            let _ = request.respond(tiny_http::Response::empty(status));
+            continue;
         }
         let authenticated = request.headers().iter().any(|h| {
             h.field.equiv("Authorization") && h.value.as_str() == format!("Bearer {token}")
@@ -439,7 +575,8 @@ fn serve() -> Result<(), String> {
                         let (send, receive) = std::sync::mpsc::channel();
                         jobs.send(("hook".into(), p.clone(), Some(send)))
                             .map_err(|_| "采集器已退出")?;
-                        receive.recv_timeout(Duration::from_secs(2))
+                        receive
+                            .recv_timeout(Duration::from_secs(2))
                             .map_err(|_| "结束事件未被采集器确认")?
                     } else {
                         jobs.send(("hook".into(), p.clone(), None))
@@ -473,7 +610,7 @@ fn serve() -> Result<(), String> {
             ),
         );
     }
-    let _=jobs.send(("shutdown".into(),Value::Null,None));
+    let _ = jobs.send(("shutdown".into(), Value::Null, None));
     drop(jobs);
     let _ = worker.join();
     let _ = std::fs::remove_file(endpoint(&home));
@@ -490,7 +627,8 @@ mod recovery_tests {
     }
     #[test]
     fn terminal_rpc_rejects_a_failed_durable_write() {
-        let home = std::env::temp_dir().join(format!("codex-write-failure-{}", uuid::Uuid::new_v4()));
+        let home =
+            std::env::temp_dir().join(format!("codex-write-failure-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
         let mut collector = Collector::new(home.clone()).unwrap();
         let started = now();
@@ -505,7 +643,10 @@ mod recovery_tests {
     }
     #[test]
     fn start_rpc_rejects_a_failed_durable_write() {
-        let home = std::env::temp_dir().join(format!("codex-start-write-failure-{}", uuid::Uuid::new_v4()));
+        let home = std::env::temp_dir().join(format!(
+            "codex-start-write-failure-{}",
+            uuid::Uuid::new_v4()
+        ));
         std::fs::create_dir_all(home.join(".agent-studio/codex-recovery-v1.json")).unwrap();
         let mut collector = Collector::new(home.clone()).unwrap();
         assert!(ingest_hook_durably(&mut collector, &json!({"agent_source":"codex","session_id":"tracked","turn_id":"one","hook_event_name":"UserPromptSubmit","timestamp":now()})).is_err());
@@ -513,7 +654,8 @@ mod recovery_tests {
     }
     #[test]
     fn untracked_codex_stop_remains_harmless() {
-        let home = std::env::temp_dir().join(format!("codex-untracked-stop-{}", uuid::Uuid::new_v4()));
+        let home =
+            std::env::temp_dir().join(format!("codex-untracked-stop-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
         let mut collector = Collector::new(home.clone()).unwrap();
         assert_eq!(ingest_hook_durably(&mut collector, &json!({"agent_source":"codex","session_id":"unknown","turn_id":"one","hook_event_name":"Stop","timestamp":now()})).unwrap(), false);
@@ -522,14 +664,18 @@ mod recovery_tests {
     }
     #[test]
     fn hidden_codeg_child_stop_does_not_require_recovery_record() {
-        let home = std::env::temp_dir().join(format!("codex-hidden-child-{}", uuid::Uuid::new_v4()));
+        let home =
+            std::env::temp_dir().join(format!("codex-hidden-child-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&home).unwrap();
         let mut collector = Collector::new(home.clone()).unwrap();
         collector.hub.hide_codeg_child_codex("thr-child");
         let started = now();
         assert_eq!(ingest_hook_durably(&mut collector, &json!({"agent_source":"codex","session_id":"thr-child","turn_id":"one","hook_event_name":"UserPromptSubmit","timestamp":started})).unwrap(), true);
         assert_eq!(ingest_hook_durably(&mut collector, &json!({"agent_source":"codex","session_id":"thr-child","turn_id":"one","hook_event_name":"Stop","timestamp":started+1})).unwrap(), true);
-        assert!(collector.hub.snapshot()["sessions"].as_array().unwrap().is_empty());
+        assert!(collector.hub.snapshot()["sessions"]
+            .as_array()
+            .unwrap()
+            .is_empty());
         assert!(!home.join(".agent-studio/codex-recovery-v1.json").exists());
         std::fs::remove_dir_all(home).unwrap();
     }

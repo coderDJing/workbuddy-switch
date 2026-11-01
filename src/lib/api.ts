@@ -51,6 +51,12 @@ import type {
   VscodeSessionList,
   VscodeSessionRef,
   WbVariant,
+  WebdavConfig,
+  WebdavConfigInput,
+  WebdavRemoteInfo,
+  WebdavActionResult,
+  WebdavRestoreResult,
+  WebdavRestorePreview,
 } from "./types";
 import { DEMO_UNAVAILABLE_MESSAGE, demoModeEnabled } from "./demo-mode";
 import { screenshotDemoResponse } from "./screenshot-demo";
@@ -69,6 +75,7 @@ const DEMO_READ_COMMANDS = new Set([
   "get_github_config", "check_update", "get_launch_at_login_enabled", "switch_progress",
   "get_travel_status", "get_auto_travel_config", "get_rate_limits",
   "get_rate_limit_hook_status", "get_rate_limit_config",
+  "get_webdav_config", "webdav_info",
 ]);
 
 export function isDemoMode(): boolean {
@@ -192,6 +199,14 @@ const ROUTES: Record<string, Route> = {
   save_github_config: { method: "POST", path: "/api/update/config" },
   check_update: { method: "GET", path: "/api/update/check" },
   switch_progress: { method: "GET", path: "/api/switch/progress" },
+  get_webdav_config: { method: "GET", path: "/api/webdav/config" },
+  save_webdav_config: { method: "POST", path: "/api/webdav/config" },
+  webdav_test_connection: { method: "POST", path: "/api/webdav/test" },
+  webdav_backup: { method: "POST", path: "/api/webdav/backup" },
+  webdav_restore_preview: { method: "POST", path: "/api/webdav/restore/preview" },
+  webdav_restore: { method: "POST", path: "/api/webdav/restore" },
+  webdav_sync_now: { method: "POST", path: "/api/webdav/sync" },
+  webdav_info: { method: "GET", path: "/api/webdav/info" },
 };
 
 /**
@@ -409,7 +424,7 @@ export function getJetbrainsStatus(): Promise<JetbrainsStatus> {
 }
 
 /**
- * 切换 JetBrains IDE（IDEA / PyCharm）CodeBuddy 插件账号。
+ * 切换 JetBrains IDE（全家桶）/ Android Studio 的 CodeBuddy 插件账号。
  *
  * `restart` 默认 true：IDE 运行时由后端先优雅退出、写入后再重新打开；
  * 传 false 退回「请先完全退出 IDE」的手动模式（不在 IDE 中自动操作）。
@@ -997,6 +1012,52 @@ export function saveGithubConfig(config: GithubConfig): Promise<GithubConfig> {
 
 export function checkUpdate(proxy?: string, force?: boolean): Promise<UpdateInfo> {
   return call("check_update", { proxy: proxy?.trim() || null, force: force ?? false });
+}
+
+// ---------------------------------------------------------------------------
+// WebDAV 备份 / 跨设备同步
+// ---------------------------------------------------------------------------
+
+export function getWebdavConfig(): Promise<WebdavConfig> {
+  return call("get_webdav_config");
+}
+
+/** 保存 WebDAV 配置；`password` 留空表示沿用已存口令（脱敏视图不回显明文）。 */
+export function saveWebdavConfig(config: WebdavConfigInput): Promise<WebdavConfig> {
+  return call("save_webdav_config", {
+    config: config as unknown as Record<string, unknown>,
+  });
+}
+
+export function webdavTestConnection(): Promise<{ ok: boolean; dirUrl: string }> {
+  return call("webdav_test_connection");
+}
+
+export function webdavBackup(passphrase: string): Promise<WebdavActionResult> {
+  return call("webdav_backup", { passphrase });
+}
+
+export function webdavRestorePreview(
+  passphrase: string,
+): Promise<WebdavRestorePreview> {
+  return call("webdav_restore_preview", { passphrase });
+}
+
+export function webdavRestore(
+  passphrase: string,
+  indexes: number[],
+  restoreConfigs: boolean,
+  expectedSnapshot: string,
+): Promise<WebdavRestoreResult> {
+  return call("webdav_restore", { passphrase, indexes, restoreConfigs, expectedSnapshot });
+}
+
+export function webdavSyncNow(passphrase: string): Promise<WebdavActionResult> {
+  return call("webdav_sync_now", { passphrase });
+}
+
+export function webdavInfo(): Promise<WebdavRemoteInfo> {
+  return call("webdav_info");
 }
 
 export function relaunchApp(): Promise<void> {

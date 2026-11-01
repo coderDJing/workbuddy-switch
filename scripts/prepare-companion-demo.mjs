@@ -43,13 +43,14 @@ if (!/^[0-9a-f]{40}$/.test(version.revision)) {
 if (mode !== 'copy') {
   const marker = path.join(output, '.revision');
   const built = await fs.readFile(marker, 'utf8').catch(() => '');
-  if (force || built.trim() !== version.revision) {
+  const fingerprint = [version.revision, ...(version.patches ?? []).map((p) => p.sha256)].join(":");
+  if (force || built.trim() !== fingerprint) {
     console.log(`Building Agent Companion demo assets at ${version.revision}`);
     // The archived source carries its own lockfile. `--base=./` overrides the
     // upstream Pages subpath so the frame works under any hosting prefix.
-    execFileSync('npm', ['ci'], { cwd: companion, stdio: 'inherit' });
-    execFileSync('npm', ['run', 'build:demo', '--', '--base=./'], { cwd: companion, stdio: 'inherit' });
-    await fs.writeFile(marker, `${version.revision}\n`);
+    execFileSync('npm', ['ci'], { cwd: companion, stdio: 'inherit', shell: process.platform === 'win32' });
+    execFileSync('npm', ['run', 'build:demo', '--', '--base=./'], { cwd: companion, stdio: 'inherit', shell: process.platform === 'win32' });
+    await fs.writeFile(marker, `${fingerprint}\n`);
   } else {
     console.log(`Agent Companion demo assets already built at ${version.revision}`);
   }

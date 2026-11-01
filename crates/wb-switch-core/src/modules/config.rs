@@ -276,7 +276,9 @@ pub fn clear_codebuddy_ide_app_cache() {
 ///
 /// `enabled` 默认关闭：全新安装需用户在设置页显式开启；已有用户在
 /// [`load_checkin_config`] 中沿用历史默认（开启），升级不改其状态。
-/// `checkin_start` / `checkin_end` 为空串 = 不限制签到时间段（与改动前行为一致）。
+/// `checkin_start` / `checkin_end` 默认 `08:00`~`22:00`：账号按 (本地日期, 账号)
+/// 哈希分散到窗口内的某一分钟，避免宿主一启动就把全部账号连续打完；把窗口设成
+/// `00:00`~`23:59` 即可把分散签到目标覆盖到全天。
 pub fn default_checkin_config() -> Value {
     checkin_config_with_enabled(false)
 }
@@ -290,8 +292,8 @@ fn checkin_config_with_enabled(enabled: bool) -> Value {
     json!({
         "enabled": enabled,
         "excluded_account_ids": [],
-        "checkin_start": "",
-        "checkin_end": "",
+        "checkin_start": "08:00",
+        "checkin_end": "22:00",
         "start_hour": 6,
         "end_hour": 12,
         "keepalive_days": 0,
@@ -346,11 +348,15 @@ fn apply_checkin_config(merged: &mut Value, input: &Value) {
             merged[key] = json!(value);
         }
     }
-    // 时间段保存归一化：合法值零填充后落盘，非法/非字符串归一为空串（= 不限制）。
+    // 时间段保存归一化：合法值零填充后落盘，非法/非字符串归一为空串
+    // （空串在调度侧按 DEFAULT_CHECKIN_WINDOW 解释）。字段缺失时保留默认窗口，
+    // 避免「用户只改了其他字段」把窗口意外重置成空、退化成不限时段。
     for key in ["checkin_start", "checkin_end"] {
-        let normalized = map
-            .get(key)
-            .and_then(Value::as_str)
+        let Some(raw) = map.get(key) else {
+            continue;
+        };
+        let normalized = raw
+            .as_str()
             .and_then(parse_clock)
             .map(|(hour, minute)| format!("{hour:02}:{minute:02}"))
             .unwrap_or_default();
@@ -1134,6 +1140,96 @@ pub async fn http_request_raw(
     }
 }
 
+/// 通用 HTTP 请求，返回原始响应（状态码 + 响应头 + 响应体字节），请求体为任意字节。
+///
+/// 供 WebDAV 这类非 JSON 协议使用：可指定任意方法与 Content-Type，二进制上传 /
+/// 下载，不强制 JSON。`timeout_secs` 为每次请求的整体超时上限（备份文件上传可能
+/// 远超共享客户端的 30 秒）；`None` 使用共享客户端（30 秒）。
+/// 失败（网络错误）返回 `(0, HashMap::new(), 错误信息)`。
+pub async fn http_request_bytes(
+    url: &str,
+    method: &str,
+    content_type: Option<&str>,
+    body: Option<Vec<u8>>,
+    headers: Option<&HashMap<String, String>>,
+    follow_redirects: bool,
+    timeout_secs: Option<u64>,
+) -> (u16, HashMap<String, String>, Vec<u8>) {
+    let method = match reqwest::Method::from_bytes(method.as_bytes()) {
+        Ok(method) => method,
+        Err(e) => {
+            return (
+                0,
+                HashMap::new(),
+                format!("无效的 HTTP 方法：{e}").into_bytes(),
+            )
+        }
+    };
+    let client = match timeout_secs {
+        Some(secs) => {
+            let mut builder = http_client_builder().timeout(std::time::Duration::from_secs(secs));
+            if !follow_redirects {
+                builder = builder.redirect(reqwest::redirect::Policy::none());
+            }
+            match builder.build() {
+                Ok(client) => client,
+                Err(e) => {
+                    return (
+                        0,
+                        HashMap::new(),
+                        format!("客户端创建失败: {e}").into_bytes(),
+                    )
+                }
+            }
+        }
+        None => {
+            if follow_redirects {
+                http_client().clone()
+            } else {
+                match http_client_builder()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .build()
+                {
+                    Ok(client) => client,
+                    Err(e) => {
+                        return (
+                            0,
+                            HashMap::new(),
+                            format!("客户端创建失败: {e}").into_bytes(),
+                        )
+                    }
+                }
+            }
+        }
+    };
+    let mut req = client.request(method, url);
+    if let Some(ct) = content_type {
+        req = req.header("Content-Type", ct);
+    }
+    if let Some(h) = headers {
+        for (k, v) in h {
+            req = req.header(k, v);
+        }
+    }
+    if let Some(b) = body {
+        req = req.body(b);
+    }
+    match req.send().await {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let mut resp_headers = HashMap::new();
+            for (k, v) in resp.headers() {
+                if let Ok(vs) = v.to_str() {
+                    resp_headers.insert(k.as_str().to_string(), vs.to_string());
+                }
+            }
+            let bytes = resp.bytes().await.map(|b| b.to_vec()).unwrap_or_default();
+            (status, resp_headers, bytes)
+        }
+        Err(e) => (0, HashMap::new(), e.to_string().into_bytes()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1259,7 +1355,7 @@ mod tests {
             existing.get("lazy_refresh_hours").and_then(Value::as_i64),
             Some(24)
         );
-        assert_eq!(existing.get("checkin_start"), Some(&json!("")));
+        assert_eq!(existing.get("checkin_start"), Some(&json!("08:00")));
 
         // 显式值优先于痕迹。
         for existing_install in [false, true] {
@@ -1446,10 +1542,10 @@ mod tests {
     }
 
     #[test]
-    fn checkin_window_defaults_to_unset_and_normalizes_on_save() {
+    fn checkin_window_defaults_to_spread_window_and_normalizes_on_save() {
         let defaults = default_checkin_config();
-        assert_eq!(defaults.get("checkin_start"), Some(&json!("")));
-        assert_eq!(defaults.get("checkin_end"), Some(&json!("")));
+        assert_eq!(defaults.get("checkin_start"), Some(&json!("08:00")));
+        assert_eq!(defaults.get("checkin_end"), Some(&json!("22:00")));
 
         // 合法值零填充后落盘。
         let merged = merge_checkin_config(&json!({
@@ -1462,10 +1558,10 @@ mod tests {
 
     #[test]
     fn checkin_window_invalid_values_normalize_to_empty_and_keep_other_fields() {
-        // 缺失 → 空串。
+        // 缺失 → 保留默认的分散窗口（不再重置成空串）。
         let missing = merge_checkin_config(&json!({}));
-        assert_eq!(missing.get("checkin_start"), Some(&json!("")));
-        assert_eq!(missing.get("checkin_end"), Some(&json!("")));
+        assert_eq!(missing.get("checkin_start"), Some(&json!("08:00")));
+        assert_eq!(missing.get("checkin_end"), Some(&json!("22:00")));
 
         // 非字符串 / 越界 / 格式错误 → 空串，不落盘未知值。
         for bad in [json!(1234), json!(null), json!(true), json!("25:00")] {

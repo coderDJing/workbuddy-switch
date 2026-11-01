@@ -443,7 +443,7 @@ fn get_local_state_path(data_root: &Path) -> Result<PathBuf, String> {
 #[cfg(target_os = "windows")]
 fn dpapi_decrypt(encrypted: &[u8]) -> Result<Vec<u8>, String> {
     unsafe {
-        let mut data_in = CRYPT_INTEGER_BLOB {
+        let data_in = CRYPT_INTEGER_BLOB {
             cbData: encrypted.len() as u32,
             pbData: encrypted.as_ptr() as *mut u8,
         };
@@ -451,7 +451,7 @@ fn dpapi_decrypt(encrypted: &[u8]) -> Result<Vec<u8>, String> {
             cbData: 0,
             pbData: std::ptr::null_mut(),
         };
-        CryptUnprotectData(&mut data_in, None, None, None, None, 0, &mut data_out)
+        CryptUnprotectData(&data_in, None, None, None, None, 0, &mut data_out)
             .map_err(|e| format!("DPAPI CryptUnprotectData failed: {e}"))?;
         if data_out.pbData.is_null() || data_out.cbData == 0 {
             return Err("DPAPI returned empty data".to_string());
@@ -529,7 +529,7 @@ fn decrypt_secret_payload(
     {
         let _ = target;
         let key = get_windows_encryption_key(data_root)?;
-        return decrypt_windows_gcm_v10(&key, encrypted);
+        decrypt_windows_gcm_v10(&key, encrypted)
     }
     #[cfg(target_os = "macos")]
     {
@@ -577,7 +577,7 @@ fn encrypt_secret_payload(
     {
         let _ = (preferred_prefix, target);
         let key = get_windows_encryption_key(data_root)?;
-        return encrypt_windows_gcm_v10(&key, plaintext);
+        encrypt_windows_gcm_v10(&key, plaintext)
     }
     #[cfg(target_os = "macos")]
     {
@@ -661,6 +661,8 @@ pub fn read_secret_for(
     };
     let data_root = data_root_from_db(&db_path)?.to_path_buf();
     let conn = Connection::open(&db_path).map_err(|e| format!("打开 state.vscdb 失败: {e}"))?;
+    conn.busy_timeout(std::time::Duration::from_secs(10))
+        .map_err(|e| format!("等待 state.vscdb 失败: {e}"))?;
     let key = secret_storage_item_key_for(target);
     let raw_value: Option<String> = match conn.query_row(
         "SELECT value FROM ItemTable WHERE key = ?1",
@@ -751,13 +753,27 @@ pub fn inject_secret_for(
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建 state.vscdb 父目录失败: {e}"))?;
     }
-    let conn = Connection::open(&db_path).map_err(|e| format!("打开 state.vscdb 失败: {e}"))?;
+    let mut conn = Connection::open(&db_path).map_err(|e| format!("打开 state.vscdb 失败: {e}"))?;
+    conn.busy_timeout(std::time::Duration::from_secs(10))
+        .map_err(|e| e.to_string())?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS ItemTable (key TEXT PRIMARY KEY, value TEXT)",
         [],
     )
     .map_err(|e| format!("初始化 ItemTable 失败: {e}"))?;
 
+    // SQLite makes a consistent backup, including committed WAL contents.
+    // The update itself is transactional, so verification errors roll back
+    // without replacing a live database file or leaving an old WAL behind.
+    let backup_dir = crate::modules::config::backup_dir();
+    std::fs::create_dir_all(&backup_dir).map_err(|e| e.to_string())?;
+    let backup = backup_dir.join(format!("state-{}.vscdb.bak", uuid::Uuid::new_v4()));
+    conn.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])
+        .map_err(|e| format!("备份 state.vscdb 失败，未写入凭据: {e}"))?;
+    let transaction = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| format!("state.vscdb 仍在使用，未写入凭据: {e}"))?;
+    let conn = &transaction;
     let db_key = secret_storage_item_key_for(target);
     let existing_prefix: Option<String> = match conn.query_row(
         "SELECT value FROM ItemTable WHERE key = ?",
@@ -804,6 +820,12 @@ pub fn inject_secret_for(
     if parsed.get("type").and_then(|v| v.as_str()) != Some("Buffer") {
         return Err("写后校验失败：value 不是 Buffer".to_string());
     }
+    if decode_secret_storage_value(&written, &data_root, target)? != plaintext {
+        return Err("写后解密校验失败，已回滚凭据写入".to_string());
+    }
+    transaction
+        .commit()
+        .map_err(|e| format!("提交凭据失败: {e}"))?;
     Ok(db_path)
 }
 

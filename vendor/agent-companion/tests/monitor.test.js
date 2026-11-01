@@ -144,8 +144,8 @@ function writeCodeBuddyDb(dbPath, sessions) {
 
 test('Codeg desktop db lives under Application Support/app.codeg',()=>{
  const paths=defaultCodegDbPaths('/Users/apple');
- assert.equal(paths[0],'/Users/apple/Library/Application Support/app.codeg/codeg.db');
- assert.ok(paths.includes('/Users/apple/Library/Application Support/codeg/codeg.db'));
+ assert.equal(paths[0],path.join('/Users/apple','Library/Application Support/app.codeg/codeg.db'));
+ assert.ok(paths.includes(path.join('/Users/apple','Library/Application Support/codeg/codeg.db')));
 });
 
 test('Codeg-hosted Codex threads stay on the Codeg seat instead of a Codex duplicate',()=>{

@@ -31,8 +31,8 @@ test('the VS Code family matches main executables only and never another host ki
 
 test('host presences of two kinds never share a verdict', async () => {
   let time = 0;
-  const ide = new HostPresence({ source: 'codebuddy-ide', now: () => time, ttlMs: 0, minMisses: 2, run: async () => '/sbin/launchd\n' });
-  const vscode = new HostPresence({ source: 'vscode', now: () => time, ttlMs: 0, minMisses: 2, run: async () => '/Applications/Visual Studio Code.app/Contents/MacOS/Electron\n' });
+  const ide = new HostPresence({ platform: 'darwin', source: 'codebuddy-ide', now: () => time, ttlMs: 0, minMisses: 2, run: async () => '/sbin/launchd\n' });
+  const vscode = new HostPresence({ platform: 'darwin', source: 'vscode', now: () => time, ttlMs: 0, minMisses: 2, run: async () => '/Applications/Visual Studio Code.app/Contents/MacOS/Electron\n' });
   ide.noteHook(); vscode.noteHook();
   assert.equal(await ide.observe(), 'alive');
   assert.equal(await vscode.observe(), 'alive');
@@ -43,7 +43,7 @@ test('host presences of two kinds never share a verdict', async () => {
 
 test('the probe debounces, caches, and never infers an exit without a sighting', async () => {
   let time = 0, calls = 0, output = '/sbin/launchd\n';
-  const presence = new HostPresence({ source: 'workbuddy', now: () => time, ttlMs: 5000, minMisses: 2, run: async () => { calls++; return output; } });
+  const presence = new HostPresence({ platform: 'darwin', source: 'workbuddy', now: () => time, ttlMs: 5000, minMisses: 2, run: async () => { calls++; return output; } });
   assert.equal(await presence.observe(), 'unknown');
   assert.equal(await presence.observe(), 'unknown');
   assert.equal(calls, 1, 'a second observe within the ttl must not run ps again');
@@ -63,7 +63,7 @@ test('the probe debounces, caches, and never infers an exit without a sighting',
 });
 
 test('an unreadable process list or an unsupported platform stays unknown', async () => {
-  const failing = new HostPresence({ source: 'workbuddy', now: () => 0, ttlMs: 0, minMisses: 1, run: async () => { throw Error('ps unavailable'); } });
+  const failing = new HostPresence({ platform: 'darwin', source: 'workbuddy', now: () => 0, ttlMs: 0, minMisses: 1, run: async () => { throw Error('ps unavailable'); } });
   failing.noteHook();
   assert.equal(await failing.observe(), 'unknown');
   assert.equal(await failing.observe(), 'unknown');

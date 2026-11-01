@@ -87,6 +87,20 @@ fn worker() {
                 ));
             }
         }
+        "mark-used" => {
+            let path = root.join(".wb-switch/accounts.json");
+            let before = std::fs::read(&path).unwrap();
+            assert_eq!(
+                account::mark_used("account", account::USED_CLIENT_CODEBUDDY_CLI)
+                    .unwrap_err()
+                    .kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            std::fs::write(root.join("ready"), "ready").unwrap();
+            wait_for(&root.join("continue"));
+            account::mark_used("account", account::USED_CLIENT_CODEBUDDY_CLI).unwrap();
+        }
         "refresh" => {
             let original = json!({"id":"account", "uid":"uid", "access_token":"old", "refresh_token":"old-rt"});
             std::fs::write(root.join("ready"), "ready").unwrap();
@@ -99,6 +113,36 @@ fn worker() {
         }
         _ => panic!("Unknown worker mode"),
     }
+}
+
+#[test]
+fn last_used_waits_for_the_transaction_and_preserves_fresh_credentials() {
+    let sandbox = Sandbox::new();
+    let path = sandbox.0.join(".wb-switch/auth-state.lock");
+    let guard = StateLock::try_at(&path).unwrap();
+    std::fs::write(
+        sandbox.0.join(".wb-switch/accounts.json"),
+        json!([{"id":"account", "access_token":"old"}]).to_string(),
+    )
+    .unwrap();
+    let mut child = sandbox.child("mark-used", 0);
+    wait_for(&sandbox.0.join("ready"));
+    let fresh =
+        json!({"id":"account", "access_token":"new", "refresh_token":"new-rt", "note":"kept"});
+    std::fs::write(
+        sandbox.0.join(".wb-switch/accounts.json"),
+        json!([fresh.clone()]).to_string(),
+    )
+    .unwrap();
+    drop(guard);
+    std::fs::write(sandbox.0.join("continue"), "continue").unwrap();
+    assert!(child.wait().unwrap().success());
+    let mut saved = sandbox.read(".wb-switch/accounts.json")[0].clone();
+    assert!(saved["lastUsedAt"].as_i64().unwrap() > 0);
+    assert_eq!(saved["lastUsedClient"], account::USED_CLIENT_CODEBUDDY_CLI);
+    saved.as_object_mut().unwrap().remove("lastUsedAt");
+    saved.as_object_mut().unwrap().remove("lastUsedClient");
+    assert_eq!(saved, fresh);
 }
 
 #[test]

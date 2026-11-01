@@ -1,7 +1,8 @@
 # Agent Companion desktop component
 
-The desktop build includes one pinned Agent Companion source snapshot in
-`vendor/agent-companion/`. Its revision and archive digest are recorded in
+The desktop build includes a pinned Agent Companion source snapshot with a
+tracked host compatibility patch in `vendor/agent-companion/`. Its upstream
+revision, archive digest, and patch digest are recorded in
 `vendor/agent-companion.version.json`. The Rust plugin, embedded pages, and
 monitor runtime all come from that snapshot. The regular WebUI `npm run build`
 does not prepare or start the native component.
@@ -16,10 +17,22 @@ node scripts/vendor-agent-companion.mjs /path/to/agent-companion <full-commit-sh
 
 The script uses `git archive`, so local uncommitted changes do not enter the
 snapshot. Commit the resulting `vendor/` files together with the manifest and
-the host changes. A clean wb-switch checkout then needs no sibling repository.
+the host changes. The script automatically applies
+`patches/agent-companion/host-compatibility.patch` before replacing the snapshot;
+if the patch conflicts with a newer upstream version, it fails without replacing
+the existing snapshot. Refresh the patch against that version before retrying.
+A clean wb-switch checkout then needs no sibling repository.
 The `interfaceVersion` in the manifest is the host/component compatibility
 boundary; changes to native plugin commands or window behavior require a host
 release.
+
+The maintained fork keeps the newer pinned `14430ef` base (0.2.2), including
+its existing structured questions, optional question expiry and macOS panel
+behavior. The replayable patch adds the reviewed PR #121 and #137 improvements:
+permission-state log monitoring, lifecycle handling, safer workspace jumps and
+internal Codex-session filtering, together with cross-platform regression fixes.
+Its SHA-256 is recorded in the manifest. The patch was regenerated against the
+actual pinned base, rather than downgrading the component to an older PR snapshot.
 
 ## Build
 

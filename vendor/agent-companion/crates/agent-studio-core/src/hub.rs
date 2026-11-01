@@ -5,6 +5,13 @@ pub const STALE: i64 = 45 * 60 * 1000;
 /// Optional waits stop blocking after this window, matching the host app's own
 /// 60-second no-interaction auto-resolution.
 pub const OPTIONAL_TTL_MS: i64 = 60_000;
+/// Hook 驱动的客户端（CodeBuddy IDE / CLI / WorkBuddy）没有轮次级心跳：一轮对话被强行
+/// 打断后就不会再有任何事件，等 45 分钟才收敛太慢。一次长工具调用结束时会立刻补上事件，
+/// 误判也会被下一个事件自动纠正，所以这里可以用更短的兜底。
+pub const STALE_IDLE: i64 = 5 * 60 * 1000;
+/// 未被解决的权限等待最长保留时间。客户端弹「需要你允许」后，可能永远等不到那次工具调用
+/// （自动批准/自动拒绝、或弹窗被直接关掉），pending 不清就会一直显示「待确认」。
+pub const WAIT_EXPIRY: i64 = 15 * 60 * 1000;
 pub fn terminal(s: &str) -> bool {
     matches!(s, "done" | "error" | "aborted")
 }
@@ -20,7 +27,9 @@ pub struct Hub {
 impl Hub {
     pub fn hide_codeg_child_codex(&mut self, external_id: &str) {
         let id = external_id.strip_prefix("thr_").unwrap_or(external_id);
-        if !id.is_empty() { self.hidden_codeg_codex_ids.insert(id.to_owned()); }
+        if !id.is_empty() {
+            self.hidden_codeg_codex_ids.insert(id.to_owned());
+        }
     }
     pub fn new() -> Self {
         Self {
@@ -79,15 +88,16 @@ impl Hub {
         // against model continuation, including transcript replay after restore.
         if source == "codex" && ty == "activity" {
             s["pending"].as_array_mut().unwrap().retain(|p| {
-                !(text(&p["id"]).starts_with("perm:")
-                    && p["ts"].as_i64().unwrap_or(i64::MAX) < ts)
+                !(text(&p["id"]).starts_with("perm:") && p["ts"].as_i64().unwrap_or(i64::MAX) < ts)
             });
             if s["status"] == "wait" && s["pending"].as_array().unwrap().is_empty() {
                 s["status"] = json!("running");
             }
         }
-        let same_round_request = source == "codex" && !round.is_empty()
-            && round == text(&s["roundId"]) && matches!(ty.as_str(), "wait" | "resolve");
+        let same_round_request = source == "codex"
+            && !round.is_empty()
+            && round == text(&s["roundId"])
+            && matches!(ty.as_str(), "wait" | "resolve");
         if ts < s["updatedAt"].as_i64().unwrap_or(0) && !same_round_request {
             return;
         }
@@ -104,7 +114,9 @@ impl Hub {
             s["steps"] = json!([]);
             s["status"] = json!("running");
             s["tokens"] = Value::Null;
-            if source == "codex" { s.as_object_mut().unwrap().remove("recovered"); }
+            if source == "codex" {
+                s.as_object_mut().unwrap().remove("recovered");
+            }
             if let Some(o) = s.as_object_mut() {
                 o.remove("endedBy");
             }
@@ -118,7 +130,13 @@ impl Hub {
         s["updatedAt"] = json!(ts.max(s["updatedAt"].as_i64().unwrap_or(0)));
         let mut event = None;
         match ty.as_str() {
-            "start" => s["status"] = json!(if s["pending"].as_array().unwrap().is_empty() { "running" } else { "wait" }),
+            "start" => {
+                s["status"] = json!(if s["pending"].as_array().unwrap().is_empty() {
+                    "running"
+                } else {
+                    "wait"
+                })
+            }
             "step" if !terminal(&text(&s["status"])) => {
                 let a = s["steps"].as_array_mut().unwrap();
                 if !a.iter().any(|x| x["id"] == ev["eventId"]) {
@@ -161,15 +179,22 @@ impl Hub {
                 }
             }
             "permission_check" if !terminal(&text(&s["status"])) => {
-                if !s["permissionChecks"].is_array() { s["permissionChecks"] = json!([]); }
+                if !s["permissionChecks"].is_array() {
+                    s["permissionChecks"] = json!([]);
+                }
                 let checks = s["permissionChecks"].as_array_mut().unwrap();
                 if !checks.iter().any(|check| check["id"] == ev["callId"]) {
                     checks.push(json!({"id":ev["callId"],"ts":ts}));
                 }
             }
             "permission_resolve" => {
-                if !s["permissionChecks"].is_array() { s["permissionChecks"] = json!([]); }
-                s["permissionChecks"].as_array_mut().unwrap().retain(|check| check["id"] != ev["callId"]);
+                if !s["permissionChecks"].is_array() {
+                    s["permissionChecks"] = json!([]);
+                }
+                s["permissionChecks"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|check| check["id"] != ev["callId"]);
             }
             "end" => {
                 s["status"] = ev["status"].clone();
@@ -211,7 +236,9 @@ impl Hub {
             .filter(|s| {
                 !(s["source"] == "codex"
                     && (hosted.contains(text(&s["sessionId"]).trim_start_matches("thr_"))
-                        || self.hidden_codeg_codex_ids.contains(text(&s["sessionId"]).trim_start_matches("thr_"))))
+                        || self
+                            .hidden_codeg_codex_ids
+                            .contains(text(&s["sessionId"]).trim_start_matches("thr_"))))
             })
             .cloned()
             .map(|mut s| {
@@ -225,9 +252,17 @@ impl Hub {
                 if s["status"] == "wait" && s["pending"].as_array().unwrap().is_empty() {
                     s["status"] = json!("running");
                 }
+                // Hook 驱动的客户端没有轮次级心跳，长时间没有任何事件基本等于这一轮
+                // 被强行中断了，用更短的兜底停止转圈（Codex 有自己的恢复机制，仍用 STALE）。
+                // 有 pending 的等待**不**参与兜底：权限询问可能真的要等人很久。
+                let idle = if text(&s["source"]) == "codex" {
+                    STALE
+                } else {
+                    STALE_IDLE
+                };
                 let stale = !terminal(&text(&s["status"]))
                     && s["pending"].as_array().is_some_and(|a| a.is_empty())
-                    && time - s["updatedAt"].as_i64().unwrap_or(0) > STALE;
+                    && time - s["updatedAt"].as_i64().unwrap_or(0) > idle;
                 let cwd = text(&s["cwd"]);
                 s["project"] = json!(std::path::Path::new(&cwd)
                     .file_name()
@@ -248,15 +283,28 @@ impl Hub {
             })
             .collect();
         sessions.sort_by_key(|s| std::cmp::Reverse(s["updatedAt"].as_i64().unwrap_or(0)));
-        let mut events: Vec<_> = self.events.iter().filter(|e| {
-            let id = text(&e["sessionId"]);
-            if let Some(s) = self.sessions.get(&id) {
-                let sid = text(&s["sessionId"]);
-                s["source"] != "codex" || !(self.hidden_codeg_codex_ids.contains(sid.trim_start_matches("thr_")) || hosted.contains(sid.trim_start_matches("thr_")))
-            } else {
-                !self.hidden_codeg_codex_ids.contains(id.strip_prefix("codex:").unwrap_or(&id).trim_start_matches("thr_"))
-            }
-        }).cloned().collect();
+        let mut events: Vec<_> = self
+            .events
+            .iter()
+            .filter(|e| {
+                let id = text(&e["sessionId"]);
+                if let Some(s) = self.sessions.get(&id) {
+                    let sid = text(&s["sessionId"]);
+                    s["source"] != "codex"
+                        || !(self
+                            .hidden_codeg_codex_ids
+                            .contains(sid.trim_start_matches("thr_"))
+                            || hosted.contains(sid.trim_start_matches("thr_")))
+                } else {
+                    !self.hidden_codeg_codex_ids.contains(
+                        id.strip_prefix("codex:")
+                            .unwrap_or(&id)
+                            .trim_start_matches("thr_"),
+                    )
+                }
+            })
+            .cloned()
+            .collect();
         for s in &sessions {
             for p in s["pending"].as_array().into_iter().flatten() {
                 let id = json!([s["id"], s["roundId"], "wait", p["id"]]).to_string();

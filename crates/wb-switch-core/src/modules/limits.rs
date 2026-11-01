@@ -10,12 +10,12 @@
 //!
 //! 扫描范围逐来源判定：**客户端数据根不存在**（本机没装）的来源既不安装 hook 也不扫日志。
 //!
-//! 不新增任何网络请求，也不解析客户端 UI 文案。日志窗口固定为最近 2 天（WorkBuddy 两档位
+//! 不新增任何网络请求，也不解析客户端 UI 文案。限额日志窗口固定为最近 2 天（WorkBuddy 两档位
 //! 与 CLI 是最近 2 个日期目录，两个 IDE 按文件 mtime 收窗）；重置时刻直接采用日志原文 / payload
 //! 原文给出的官方值，不自建限流窗口模型。
+//! Token 统计复用本模块的归属解析，账号索引按其用量范围读取保留日志，不受限额窗口限制。
 //!
-//! 五个来源各扫一遍（PRD D1：插件宿主共享根 `CodeBuddyExtension/Logs/CodeBuddyIDE/` 与 CN
-//! IDE 真身重复记录同一次 429，**不扫**）：
+//! 六个来源各扫一遍：
 //!
 //! | 来源 | 日志根 | 格式 | 枚举 | 归因 |
 //! |---|---|---|---|---|
@@ -23,6 +23,10 @@
 //! | CodeBuddy CLI | `~/.codebuddy/logs` | `WorkBuddy` | 日期目录 | 日志内鉴权 uid → 轮换状态文件 |
 //! | CodeBuddy IDE | `<data_dir>/logs` | `Ide` | 会话目录 + mtime | 日志内鉴权 uid → IDE 状态文件 |
 //! | CodeBuddy CN IDE | `<data_dir>/logs` | `Ide` | 会话目录 + mtime | 同上 |
+//! | 插件宿主 agent 日志 | `CodeBuddyExtension/Logs/<宿主>/<日期>` | `Agent` | 日期目录 | 日志内鉴权 uid → IDE 状态文件 |
+//!
+//! 插件宿主那一路**必须扫**：实测 2026-09-27 的一次 429 只落在它里面（两个 IDE 真身的
+//! exthost 树里没有），早期「它是 IDE 真身的重复记录所以不扫」的结论在当前版本已不成立。
 //!
 //! 一次返回全部账号的当前受限状态——扫描本身就是全局的，按账号调用会把同一份日志扫 N 遍。
 //!
@@ -177,6 +181,13 @@ enum LogFormat {
     WorkBuddy,
     /// `2026-09-17 10:28:26.730 [info] …`：两个 CodeBuddy IDE。
     Ide,
+    /// `[2026/9/27 13:27:37.109] [Info] …`：插件宿主的 agent 业务日志
+    /// （`CodeBuddyExtension/Logs/<宿主>/<日期>/<工作区>__<hash>.log`）。
+    ///
+    /// 行首时间戳是 WorkBuddy 那种「方括号 + 非补零」写法，但事件 id / 模型 / 鉴权行都与两个
+    /// IDE 同构（`conversationId=`、`modelId=`、`[PulseServiceLifecycle] Auth session changed: … uid=`），
+    /// 所以时间戳按 WorkBuddy 解析、归因按 IDE。
+    Agent,
 }
 
 /// 鉴权行标记：顺序扫描时据此维护「事件前最近一次 uid」，是新来源唯一的时态可靠账号线索。
@@ -394,7 +405,8 @@ fn scan_text_scoped(
                     }
                 }
             }
-            LogFormat::Ide => {
+            // Agent 与两个 IDE 同构：会话级模型映射 + `[handleAuthError]` 文件级兜底。
+            LogFormat::Ide | LogFormat::Agent => {
                 // 会话级模型映射：`[ModelSelection] conversationId=…, modelId=…` 与
                 // `[AcpAgent:<conv>] … modelId=…`。`modelId=auto` 视为未知（不覆盖已有值）。
                 if line.contains(IDE_MODEL_FIELD) {
@@ -439,7 +451,7 @@ fn scan_text_scoped(
                 });
                 workbuddy_attribution(line, &request_models, &session_models, classifier)
             }
-            LogFormat::Ide => {
+            LogFormat::Ide | LogFormat::Agent => {
                 ide_attribution(line, &conversation_models, auth_error_model.as_deref())
             }
         };
@@ -603,6 +615,8 @@ fn collect_events(root: &Path, format: LogFormat, auth: AuthMarker) -> Vec<Event
         LogFormat::WorkBuddy => windowed_log_files(root, cutoff_ms),
         // IDE 会话目录下按插件目录过滤 + 文件 mtime 收窗。
         LogFormat::Ide => ide_log_files(root, cutoff_ms),
+        // Agent：`<根>/<日期>/*.log`（日期目录形态与 CLI / WorkBuddy 一致）。
+        LogFormat::Agent => windowed_log_files(root, cutoff_ms),
     };
     let mut hits = Vec::new();
     for file in files {
@@ -715,7 +729,8 @@ fn dedupe(hits: Vec<Hit>) -> Vec<Event> {
 fn line_timestamp(line: &str, format: LogFormat) -> Option<i64> {
     let trimmed = line.trim_start();
     let naive = match format {
-        LogFormat::WorkBuddy => {
+        // Agent 的行首同样是 `[2026/9/27 13:27:37.109]`（方括号 + 非补零），按 WorkBuddy 解析。
+        LogFormat::WorkBuddy | LogFormat::Agent => {
             let head = trimmed.split_whitespace().next().unwrap_or_default();
             if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(head) {
                 return Some(parsed.timestamp_millis());
@@ -1039,11 +1054,25 @@ pub(crate) fn account_by_session(
     variant: WbVariant,
     session_ids: &BTreeSet<String>,
 ) -> HashMap<String, String> {
+    account_by_session_at(
+        &workbuddy_db_path(variant),
+        variant,
+        session_ids,
+        &account::load_accounts(),
+    )
+}
+
+pub(crate) fn account_by_session_at(
+    db: &Path,
+    variant: WbVariant,
+    session_ids: &BTreeSet<String>,
+    accounts: &[Value],
+) -> HashMap<String, String> {
     let mut mapping = HashMap::new();
     if session_ids.is_empty() {
         return mapping;
     }
-    let uid_to_account: HashMap<String, String> = account::load_accounts()
+    let uid_to_account: HashMap<String, String> = accounts
         .iter()
         .filter(|acc| account::variant_of(acc) == variant)
         .filter_map(|acc| Some((account::get_str(acc, "uid")?, account::get_str(acc, "id")?)))
@@ -1051,39 +1080,173 @@ pub(crate) fn account_by_session(
     if uid_to_account.is_empty() {
         return mapping;
     }
-    let db = workbuddy_db_path(variant);
     if !db.is_file() {
         return mapping;
     }
-    let Some(conn) = open_db(&db, true) else {
+    let Some(conn) = open_db(db, true) else {
         return mapping;
     };
     if !table_exists(&conn, "sessions") {
         return mapping;
     }
     // 批量查询：逐条查库在事件多时会成为主要开销。
-    let placeholders = vec!["?"; session_ids.len()].join(",");
-    let sql = format!("SELECT id, user_id FROM sessions WHERE id IN ({placeholders})");
-    let Ok(mut statement) = conn.prepare(&sql) else {
-        return mapping;
-    };
-    let Ok(rows) = statement.query_map(rusqlite::params_from_iter(session_ids.iter()), |row| {
-        Ok((
-            row.get::<_, Option<String>>(0)?,
-            row.get::<_, Option<String>>(1)?,
-        ))
-    }) else {
-        return mapping;
-    };
-    for (session_id, user_id) in rows.flatten() {
-        let (Some(session_id), Some(user_id)) = (session_id, user_id) else {
+    let session_ids: Vec<_> = session_ids.iter().collect();
+    // Token history may exceed SQLite's parameter limit; keep each query bounded.
+    for chunk in session_ids.chunks(500) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let sql = format!("SELECT id, user_id FROM sessions WHERE id IN ({placeholders})");
+        let Ok(mut statement) = conn.prepare(&sql) else {
             continue;
         };
-        if let Some(account_id) = uid_to_account.get(&user_id) {
-            mapping.insert(session_id, account_id.clone());
+        let Ok(rows) = statement.query_map(rusqlite::params_from_iter(chunk.iter()), |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+            ))
+        }) else {
+            continue;
+        };
+        for (session_id, user_id) in rows.flatten() {
+            let (Some(session_id), Some(user_id)) = (session_id, user_id) else {
+                continue;
+            };
+            if let Some(account_id) = uid_to_account.get(&user_id) {
+                mapping.insert(session_id, account_id.clone());
+            }
         }
     }
     mapping
+}
+
+/// Read-only CLI identity index shared with Token statistics. Unlike quota events,
+/// historical usage cannot fall back to the currently active account. Missing or
+/// conflicting identities remain unresolved, including sessions resumed by another account.
+pub(crate) fn cli_accounts_by_session(
+    logs_root: &Path,
+    session_ids: &BTreeSet<String>,
+    accounts: &[Value],
+    cutoff: Option<i64>,
+) -> HashMap<String, String> {
+    if session_ids.is_empty() {
+        return HashMap::new();
+    }
+    let uid_to_account: HashMap<_, _> = accounts
+        .iter()
+        .filter_map(|acc| Some((account::get_str(acc, "uid")?, account::get_str(acc, "id")?)))
+        .collect();
+    if uid_to_account.is_empty() {
+        return HashMap::new();
+    }
+    let mut observed = HashMap::new();
+    for file in windowed_log_files(logs_root, cutoff.unwrap_or(i64::MIN)) {
+        use std::io::BufRead;
+        if session_from_file_name(&file).is_some() {
+            continue;
+        }
+        let Ok(file) = std::fs::File::open(&file) else {
+            continue;
+        };
+        let mut read_error = false;
+        let lines = std::io::BufReader::new(file)
+            .lines()
+            .map_while(|line| match line {
+                Ok(line) => Some(line),
+                Err(_) => {
+                    read_error = true;
+                    None
+                }
+            });
+        let mut file_owners = HashMap::new();
+        cli_session_owner_lines(
+            lines,
+            session_ids,
+            &uid_to_account,
+            cutoff,
+            &mut file_owners,
+        );
+        if read_error {
+            continue;
+        }
+        for (session, owner) in file_owners {
+            observed
+                .entry(session)
+                .and_modify(|previous| {
+                    if *previous != owner {
+                        *previous = None;
+                    }
+                })
+                .or_insert(owner);
+        }
+    }
+    observed
+        .into_iter()
+        .filter_map(|(session, account)| Some((session, account?)))
+        .collect()
+}
+
+#[cfg(test)]
+fn cli_session_owners(
+    text: &str,
+    session_ids: &BTreeSet<String>,
+    uid_to_account: &HashMap<String, String>,
+    cutoff: Option<i64>,
+    observed: &mut HashMap<String, Option<String>>,
+) {
+    cli_session_owner_lines(text.lines(), session_ids, uid_to_account, cutoff, observed);
+}
+
+fn cli_session_owner_lines<I, S>(
+    lines: I,
+    session_ids: &BTreeSet<String>,
+    uid_to_account: &HashMap<String, String>,
+    cutoff: Option<i64>,
+    observed: &mut HashMap<String, Option<String>>,
+) where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut auth_by_process: HashMap<String, (i64, Option<String>)> = HashMap::new();
+    for line in lines {
+        let line = line.as_ref();
+        if is_transport_line(line) {
+            continue;
+        }
+        let Some(timestamp) = line_timestamp(line, LogFormat::WorkBuddy) else {
+            continue;
+        };
+        let (tags, _) = split_logger_tags(line);
+        let process = field_after(tags, "pid=")
+            .unwrap_or("")
+            .trim_end_matches(']')
+            .to_string();
+        if line.contains(CLI_AUTH_MARKER) {
+            let account_id = auth_uid(line, AuthMarker::AuthDoInitProbe)
+                .and_then(|uid| uid_to_account.get(uid))
+                .cloned();
+            auth_by_process.insert(process.clone(), (timestamp, account_id));
+        }
+        if cutoff.is_some_and(|minimum| timestamp < minimum) {
+            continue;
+        }
+        let session = request_pair(line)
+            .map(|(_, session)| session)
+            .or_else(|| field_after(line, "sessionId=").map(str::to_string));
+        let Some(session) = session.filter(|id| session_ids.contains(id)) else {
+            continue;
+        };
+        let account_id = auth_by_process
+            .get(&process)
+            .filter(|(authenticated_at, _)| *authenticated_at <= timestamp)
+            .and_then(|(_, id)| id.clone());
+        observed
+            .entry(session)
+            .and_modify(|previous| {
+                if *previous != account_id {
+                    *previous = None;
+                }
+            })
+            .or_insert(account_id);
+    }
 }
 
 /// 账号归因：归因不到账号的事件直接丢弃（不错归给任何账号）。
@@ -1197,6 +1360,22 @@ fn resolve_by_uid(
         .collect()
 }
 
+/// Shared agent logs belong to independently logged-in hosts. A current IDE
+/// state file cannot identify an event missing its own authenticated UID.
+fn resolve_agent_events(
+    events: &[Event],
+    uid_to_account: &HashMap<String, String>,
+) -> Vec<Resolved> {
+    resolve_by_uid(
+        events,
+        uid_to_account,
+        &ActiveAccount {
+            account_id: None,
+            updated_at: None,
+        },
+    )
+}
+
 /// 聚合与过滤：per (账号, 模型) 取 `resetAt` 最大的一条（同模型多次限流以最新一次为准），
 /// 只保留官方重置时刻尚未到达的条目。
 ///
@@ -1302,6 +1481,22 @@ fn cli_state_path() -> PathBuf {
     home_dir().join(CLI_ROTATE_DIR).join(CLI_STATE_FILE)
 }
 
+/// 插件宿主日志根（`…/CodeBuddyExtension/Logs`）：CN IDE 与 VS Code 插件共用的 **agent 业务日志**。
+///
+/// 布局：`Logs/<宿主>/<日期>/<工作区>__<hash>.log`（实测宿主目录有 `CodeBuddyIDE` 与 `VSCode`）。
+/// 数据根不存在（本机没用过插件）时返回 `None` —— 与其它来源一致：不存在就不扫。
+fn plugin_host_logs_root() -> Option<PathBuf> {
+    let base = if cfg!(target_os = "windows") {
+        PathBuf::from(std::env::var_os("LOCALAPPDATA")?)
+    } else if cfg!(target_os = "macos") {
+        home_dir().join("Library").join("Application Support")
+    } else {
+        home_dir().join(".config")
+    };
+    let root = base.join("CodeBuddyExtension").join("Logs");
+    root.is_dir().then_some(root)
+}
+
 // ---------------------------------------------------------------------------
 // 扫描缓存与范围（hook 通路接入后：逐来源判定）
 // ---------------------------------------------------------------------------
@@ -1321,6 +1516,11 @@ enum ScanSource {
     Cli,
     /// CodeBuddy IDE 的一个形态（429 不触发任何事件；`scanIdeLogs` 开启且数据根存在才扫）。
     Ide(CodeBuddyIdeFlavor),
+    /// 插件宿主的 agent 业务日志（`CodeBuddyExtension/Logs/<宿主>/<日期>/*.log`）。
+    ///
+    /// 与 `Ide(x)` 的 exthost 日志树是**两份不同的记录**：本机实测一次 429 只落在这一侧
+    /// （两个 IDE 的 exthost 树里没有），所以它必须单独成为一个来源。
+    AgentLog,
 }
 
 impl ScanSource {
@@ -1332,6 +1532,7 @@ impl ScanSource {
             Self::Cli => 2,
             Self::Ide(CodeBuddyIdeFlavor::Intl) => 3,
             Self::Ide(CodeBuddyIdeFlavor::Cn) => 4,
+            Self::AgentLog => 5,
         }
     }
 }
@@ -1343,10 +1544,10 @@ struct ScanScope(u8);
 impl ScanScope {
     /// 一个来源都不扫。
     const NONE: Self = Self(0);
-    /// 全量五源。生产路径的范围一律由 `scan_scope` 按来源算出（可能正好是它），
+    /// 全量来源。生产路径的范围一律由 `scan_scope` 按来源算出（可能正好是它），
     /// 这里保留给缓存超集语义的测试用。
     #[cfg(test)]
-    const ALL: Self = Self(0b1_1111);
+    const ALL: Self = Self(0b11_1111);
 
     fn insert(&mut self, source: ScanSource) {
         self.0 |= 1 << source.bit();
@@ -1368,6 +1569,8 @@ struct ScanRoots {
     hook_sources: Vec<(ScanSource, PathBuf, PathBuf)>,
     /// 只判「数据根存在」的来源：两个 IDE。
     ide_sources: Vec<(ScanSource, PathBuf)>,
+    /// 插件宿主日志根（`…/CodeBuddyExtension/Logs`）：存在才扫。
+    agent_log_root: Option<PathBuf>,
     /// 本工具 hook 脚本的绝对路径（配置里的 marker）。
     marker: String,
 }
@@ -1398,6 +1601,7 @@ impl ScanRoots {
         Self {
             hook_sources,
             ide_sources,
+            agent_log_root: plugin_host_logs_root(),
             marker: hook_marker(),
         }
     }
@@ -1421,6 +1625,10 @@ fn scan_scope(roots: &ScanRoots, scan_ide_logs: bool) -> ScanScope {
             if data_root.is_dir() {
                 scope.insert(*source);
             }
+        }
+        // 插件宿主日志与两个 IDE 共用同一个开关：它本来就是「IDE / 插件宿主」这一侧的记录。
+        if roots.agent_log_root.as_deref().is_some_and(Path::is_dir) {
+            scope.insert(ScanSource::AgentLog);
         }
     }
     scope
@@ -1522,9 +1730,8 @@ fn scan_sources(scope: ScanScope) -> Vec<Resolved> {
     }
     // ③ 两个 CodeBuddy IDE：同一份 Ide 格式与同一套归因，只有日志根与状态文件不同。
     //
-    // **不扫** `CodeBuddyExtension/Logs/CodeBuddyIDE/`：它是插件宿主的跨 App 共享日志根，
-    // 与 CN IDE 真身重复记录同一次 429（同一 requestId、行时间差 3 ms），扫它会重复展示
-    // 且档位归属不清（PRD D1）。
+    // 注意：这里扫的是 IDE 真身的 **exthost** 日志树（`<data_dir>/logs/<会话>/window<N>/exthost/…`），
+    // 与 ④ 的插件宿主 agent 日志是两份不同记录（早期「两者重复」的结论已不成立，见 ④）。
     let mut ide_uid_to_account: Option<HashMap<String, String>> = None;
     for (flavor, state_file) in [
         (CodeBuddyIdeFlavor::Intl, IDE_STATE_FILE),
@@ -1556,6 +1763,39 @@ fn scan_sources(scope: ScanScope) -> Vec<Resolved> {
             .to_string()];
         }
         resolved.extend(ide_entries);
+    }
+    // ④ 插件宿主的 agent 业务日志（CN IDE / VS Code 插件共享根）。
+    //
+    // 早期按 PRD D1「与 CN IDE 真身重复记录同一次 429」而**不扫**，但该结论在当前版本不成立：
+    // 实测 2026-09-27 那次 429（`code=6004`、「您的使用量已超出频率限制」、`modelId=deepseek-v4.1-flash`、
+    // `conversationId=d8231a1e…`）**只**出现在这里，两个 IDE 的 exthost 树里没有 —— 不扫就整条漏掉。
+    // 万一某次事件两边都记了，最终的 (账号, 模型) 聚合会把它们并成一条（`hitCount` 累加），不会重复展示。
+    //
+    // 归因与两个 IDE 同源：日志内有 `[PulseServiceLifecycle] Auth session changed: … uid=` 鉴权行，
+    // 事件 id / 模型线索也同构，所以复用 `AuthMarker::AuthSessionChanged` + `resolve_by_uid`。
+    if scope.contains(ScanSource::AgentLog) {
+        if let Some(root) = plugin_host_logs_root() {
+            // `Logs/<宿主>/<日期>/…`：宿主目录逐个扫、排序保证结果稳定。
+            let mut hosts: Vec<PathBuf> = std::fs::read_dir(&root)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .map(|entry| entry.path())
+                        .filter(|path| path.is_dir())
+                        .collect()
+                })
+                .unwrap_or_default();
+            hosts.sort();
+            let mut events = Vec::new();
+            for host in hosts {
+                events.extend(collect_events(
+                    &host,
+                    LogFormat::Agent,
+                    AuthMarker::AuthSessionChanged,
+                ));
+            }
+            resolved.extend(resolve_agent_events(&events, &account_id_by_uid()));
+        }
     }
     resolved
 }
@@ -1625,6 +1865,140 @@ pub(crate) fn save_rate_limit_config_at(path: &Path, cfg: &Value) -> std::io::Re
 }
 
 #[cfg(test)]
+mod token_account_tests {
+    use super::*;
+
+    const SESSION_A: &str = "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa";
+    const SESSION_B: &str = "bbbbbbbb-bbbb-4bbb-bbbb-bbbbbbbbbbbb";
+    const SESSION_C: &str = "cccccccc-cccc-4ccc-cccc-cccccccccccc";
+
+    fn line(second: u8, process: u32, body: &str) -> String {
+        format!("[2026/9/15 14:00:{second:02}.000] [info] [pid={process}] {body}")
+    }
+
+    #[test]
+    fn cli_token_accounts_do_not_cross_processes_files_or_auth_changes() {
+        let ids = BTreeSet::from([SESSION_A.into(), SESSION_B.into(), SESSION_C.into()]);
+        let uids = HashMap::from([("uid-a".into(), "a".into()), ("uid-b".into(), "b".into())]);
+        let mut observed = HashMap::new();
+        let text = [
+            line(0, 1, "[AuthDoInitProbe] uid=uid-a"),
+            line(1, 2, "[AuthDoInitProbe] uid=uid-b"),
+            line(2, 1, &format!("[ModelConfig] sessionId={SESSION_A}")),
+            line(3, 2, &format!("[ModelConfig] sessionId={SESSION_B}")),
+            line(
+                4,
+                1,
+                &format!("[SandboxShell] [AuthDoInitProbe] uid=uid-b sessionId={SESSION_A}"),
+            ),
+        ]
+        .join("\n");
+        cli_session_owners(&text, &ids, &uids, None, &mut observed);
+        assert_eq!(observed.get(SESSION_A).unwrap().as_deref(), Some("a"));
+        assert_eq!(observed.get(SESSION_B).unwrap().as_deref(), Some("b"));
+        // A different file cannot borrow the previous file's auth context.
+        cli_session_owners(
+            &line(5, 1, &format!("sessionId={SESSION_C}")),
+            &ids,
+            &uids,
+            None,
+            &mut observed,
+        );
+        assert_eq!(observed.get(SESSION_C), Some(&None));
+        // Resuming A under a different account makes its history ambiguous.
+        let changed = [
+            line(6, 1, "[AuthDoInitProbe] uid=uid-b"),
+            line(7, 1, &format!("sessionId={SESSION_A}")),
+        ]
+        .join("\n");
+        cli_session_owners(&changed, &ids, &uids, None, &mut observed);
+        assert_eq!(observed.get(SESSION_A), Some(&None));
+    }
+
+    #[test]
+    fn cli_token_accounts_never_backfill_missing_or_logged_out_auth() {
+        let ids = BTreeSet::from([SESSION_A.into(), SESSION_B.into()]);
+        let uids = HashMap::from([("uid-a".into(), "a".into())]);
+        let mut observed = HashMap::new();
+        let text = [
+            line(0, 1, &format!("sessionId={SESSION_A}")),
+            line(1, 1, "[AuthDoInitProbe] uid=uid-a"),
+            line(2, 1, &format!("sessionId={SESSION_A}")),
+            line(3, 1, "[AuthDoInitProbe] uid=none"),
+            line(4, 1, &format!("sessionId={SESSION_B}")),
+        ]
+        .join("\n");
+        cli_session_owners(&text, &ids, &uids, None, &mut observed);
+        assert_eq!(observed.get(SESSION_A), Some(&None));
+        assert_eq!(observed.get(SESSION_B), Some(&None));
+    }
+
+    #[test]
+    fn cli_token_index_reads_old_logs_and_ignores_sdk_mirrors() {
+        let root = std::env::temp_dir().join(format!("wb-cli-token-{}", uuid::Uuid::new_v4()));
+        let dated = root.join("2020-01-01");
+        let sdk = dated.join("sdk/conversations");
+        std::fs::create_dir_all(&sdk).unwrap();
+        std::fs::write(
+            dated.join("business.log"),
+            [
+                line(0, 1, "[AuthDoInitProbe] uid=uid-a"),
+                line(1, 1, &format!("sessionId={SESSION_A}")),
+            ]
+            .join("\n"),
+        )
+        .unwrap();
+        std::fs::write(
+            sdk.join(format!("{SESSION_A}.log")),
+            line(2, 1, &format!("sessionId={SESSION_A}")),
+        )
+        .unwrap();
+        let ids = BTreeSet::from([SESSION_A.into(), SESSION_B.into()]);
+        let accounts = vec![json!({"id": "a", "uid": "uid-a"})];
+        let owners = cli_accounts_by_session(&root, &ids, &accounts, None);
+        assert_eq!(owners.get(SESSION_A).map(String::as_str), Some("a"));
+        assert!(!owners.contains_key(SESSION_B));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workbuddy_token_accounts_are_variant_scoped_and_batch_large_histories() {
+        let root = std::env::temp_dir().join(format!("wb-token-owner-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = root.join("workbuddy.db");
+        let mut conn = rusqlite::Connection::open(&db).unwrap();
+        conn.execute_batch("CREATE TABLE sessions (id TEXT PRIMARY KEY, user_id TEXT)")
+            .unwrap();
+        let transaction = conn.transaction().unwrap();
+        let mut ids = BTreeSet::new();
+        for index in 0..1100 {
+            let id = format!("session-{index}");
+            transaction
+                .execute("INSERT INTO sessions VALUES (?1, 'uid-shared')", [&id])
+                .unwrap();
+            ids.insert(id);
+        }
+        transaction.commit().unwrap();
+        drop(conn);
+        let accounts = vec![
+            json!({"id":"cn-account", "uid":"uid-shared", "variant":"cn"}),
+            json!({"id":"ai-account", "uid":"uid-shared", "variant":"ai"}),
+        ];
+        let cn = account_by_session_at(&db, WbVariant::Cn, &ids, &accounts);
+        assert_eq!(cn.len(), 1100);
+        assert!(cn.values().all(|id| id == "cn-account"));
+        let ai = account_by_session_at(&db, WbVariant::Ai, &ids, &accounts);
+        assert!(ai.values().all(|id| id == "ai-account"));
+        assert!(account_by_session_at(&db, WbVariant::Cn, &ids, &[]).is_empty());
+        assert!(
+            account_by_session_at(&root.join("absent.db"), WbVariant::Cn, &ids, &accounts)
+                .is_empty()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1642,6 +2016,66 @@ mod tests {
 
     fn business_line(timestamp: &str, body: &str) -> String {
         format!("[{timestamp}] [Error] [pid=1] {body}")
+    }
+
+    /// 插件宿主 agent 日志（`CodeBuddyExtension/Logs/<宿主>/<日期>/<工作区>__<hash>.log`）：
+    /// 行首是 WorkBuddy 式 `[2026/9/27 13:27:37.109]`，但鉴权行 / 事件 id / 模型线索与 IDE 同构。
+    ///
+    /// 回归：这类日志曾整棵不扫（PRD D1 认为它只是 IDE 真身的重复记录），于是 2026-09-27 那次
+    /// 真实 429（**只**写在它里面）完全查不到，账号页没有限额标记。
+    #[test]
+    fn plugin_host_agent_log_parses_uid_reset_and_model() {
+        let uid = "3ca50d51-924a-4401-9c33-10a1f45bf3ca";
+        let conversation = "d8231a1e06e549d1ab0baf63fbd92aaf";
+        let quota = "您的使用量已超出频率限制，将在 2026-09-27 19:03:12 UTC+8 重置，您也可以切换其他模型继续使用。";
+        let text = [
+            format!("[2026/9/27 10:52:47.409] [Info] [PulseServiceLifecycle] Auth session changed: hasSession=true, initialized=false, uid={uid}"),
+            format!("[2026/9/27 13:27:30.001] [Info] [ModelSelection] conversationId={conversation}, mode=craft, modelId=deepseek-v4.1-flash, source=user-selected"),
+            format!("[2026/9/27 13:27:37.182] [Error] [CraftInvokableAgent] [0a2eeed2c4c5ed2f2e2947c1e1fb7616]  Execution failed: {quota}"),
+        ]
+        .join("\n");
+        let events = dedupe(scan_text(
+            &text,
+            LogFormat::Agent,
+            AuthMarker::AuthSessionChanged,
+        ));
+        assert_eq!(events.len(), 1, "应解析出一次限额事件");
+        assert_eq!(
+            events[0].uid.as_deref(),
+            Some(uid),
+            "账号归因靠日志内鉴权行"
+        );
+        // 官方恢复时刻：`2026-09-27 19:03:12 UTC+8` == `11:03:12Z`。
+        let expected = NaiveDateTime::parse_from_str("2026-09-27 11:03:12", "%Y-%m-%d %H:%M:%S")
+            .expect("合法时间")
+            .and_utc()
+            .timestamp_millis();
+        assert_eq!(events[0].reset_at, expected);
+        let accounts = HashMap::from([(uid.to_string(), "plugin-account".to_string())]);
+        let resolved = resolve_agent_events(&events, &accounts);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].account_id, "plugin-account");
+        assert!(resolve_agent_events(&events, &HashMap::new()).is_empty());
+
+        // 行上带会话身份（`[AcpAgent:<conversationId>]`）时，从同会话的 `[ModelSelection]` 取到模型。
+        let with_session = format!(
+            "[2026/9/27 13:27:37.182] [Error] [AcpAgent:{conversation}]  Execution failed: {quota}"
+        );
+        let text = [
+            format!("[2026/9/27 13:27:30.001] [Info] [ModelSelection] conversationId={conversation}, mode=craft, modelId=deepseek-v4.1-flash, source=user-selected"),
+            with_session,
+        ]
+        .join("\n");
+        let events = dedupe(scan_text(
+            &text,
+            LogFormat::Agent,
+            AuthMarker::AuthSessionChanged,
+        ));
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].model.as_deref(), Some("deepseek-v4.1-flash"));
+        // The model is known, but this second file has no authenticated UID.
+        // It must not borrow a login from an IDE state or a previous file.
+        assert!(resolve_agent_events(&events, &accounts).is_empty());
     }
 
     /// SDK 会话日志：模型线索来自 `method:sendPrompt`，会话 id 来自文件名。
@@ -3167,6 +3601,7 @@ mod tests {
                     dir.join("CodeBuddy CN"),
                 ),
             ],
+            agent_log_root: Some(dir.join("CodeBuddyExtension").join("Logs")),
             marker: marker.to_string(),
         }
     }

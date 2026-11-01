@@ -7,7 +7,8 @@ fn internal_prompt(prompt: &str) -> bool {
     let normalized = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
     let prefixes: Vec<String> = serde_json::from_str(include_str!(
         "../../../../src/monitor/codex-internal-prompts.json"
-    )).expect("valid internal prompt templates");
+    ))
+    .expect("valid internal prompt templates");
     prefixes.iter().any(|prefix| normalized.starts_with(prefix))
 }
 
@@ -16,24 +17,34 @@ impl Collector {
         for record in crate::codex_recovery::load(&self.home, &self.settings, &self.integrations) {
             let session = &record["session"];
             let sid = text(&session["sessionId"]);
-            if sid.is_empty() || session["id"] != format!("codex:{sid}") { continue; }
+            if sid.is_empty() || session["id"] != format!("codex:{sid}") {
+                continue;
+            }
             let id = format!("codex:{sid}");
             // Old runtimes persisted internal tasks before recognizing this
             // template. Remember their identity before any late hook arrives.
             if internal_prompt(&text(&session["title"])) {
-                self.live.insert(sid, json!({"internal":true,"recoveredInternal":true}));
+                self.live
+                    .insert(sid, json!({"internal":true,"recoveredInternal":true}));
                 self.hub.sessions.remove(&id);
                 continue;
             }
-            let newer = self.hub.sessions.get(&id).is_some_and(|current|
-                current["roundId"] != session["roundId"] && current["updatedAt"].as_i64().unwrap_or(0) > session["updatedAt"].as_i64().unwrap_or(0));
-            if newer { continue; }
-            let replace = self.hub.sessions.get(&id).is_none_or(|current|
-                current["roundId"] == session["roundId"] &&
-                (session["updatedAt"].as_i64().unwrap_or(0) > current["updatedAt"].as_i64().unwrap_or(0)
-                    || session["updatedAt"] == current["updatedAt"]
-                        && crate::hub::terminal(&text(&session["status"]))
-                        && !crate::hub::terminal(&text(&current["status"]))));
+            let newer = self.hub.sessions.get(&id).is_some_and(|current| {
+                current["roundId"] != session["roundId"]
+                    && current["updatedAt"].as_i64().unwrap_or(0)
+                        > session["updatedAt"].as_i64().unwrap_or(0)
+            });
+            if newer {
+                continue;
+            }
+            let replace = self.hub.sessions.get(&id).is_none_or(|current| {
+                current["roundId"] == session["roundId"]
+                    && (session["updatedAt"].as_i64().unwrap_or(0)
+                        > current["updatedAt"].as_i64().unwrap_or(0)
+                        || session["updatedAt"] == current["updatedAt"]
+                            && crate::hub::terminal(&text(&session["status"]))
+                            && !crate::hub::terminal(&text(&current["status"])))
+            });
             if replace {
                 let mut restored = session.clone();
                 restored["recovered"] = json!(true);
@@ -44,14 +55,29 @@ impl Collector {
     }
 
     pub(crate) fn save_codex_recovery(&mut self, sid: &str) {
-        if self.hub.hidden_codeg_codex_ids.contains(sid.trim_start_matches("thr_")) { return; }
+        if self
+            .hub
+            .hidden_codeg_codex_ids
+            .contains(sid.trim_start_matches("thr_"))
+        {
+            return;
+        }
         let id = format!("codex:{sid}");
         if let (Some(session), Some(live)) = (self.hub.sessions.get(&id), self.live.get(sid)) {
-            if let Ok(record) = crate::codex_recovery::save(&self.home, &self.settings, &self.integrations, sid, session, live) {
-                if record["session"]["updatedAt"].as_i64().unwrap_or(0) > session["updatedAt"].as_i64().unwrap_or(0)
+            if let Ok(record) = crate::codex_recovery::save(
+                &self.home,
+                &self.settings,
+                &self.integrations,
+                sid,
+                session,
+                live,
+            ) {
+                if record["session"]["updatedAt"].as_i64().unwrap_or(0)
+                    > session["updatedAt"].as_i64().unwrap_or(0)
                     || record["session"]["updatedAt"] == session["updatedAt"]
                         && crate::hub::terminal(&text(&record["session"]["status"]))
-                        && !crate::hub::terminal(&text(&session["status"])) {
+                        && !crate::hub::terminal(&text(&session["status"]))
+                {
                     self.restore_codex_recovery();
                 }
             }
@@ -66,7 +92,8 @@ impl Collector {
         let get = |a: &str, b: &str| p[a].as_str().or(p[b].as_str()).unwrap_or("").to_owned();
         let sid = get("session_id", "sessionId");
         let event = get("hook_event_name", "hookEventName");
-        if sid.is_empty() || sid.len() > 200
+        if sid.is_empty()
+            || sid.len() > 200
             || !matches!(
                 event.as_str(),
                 "SessionStart"
@@ -88,8 +115,14 @@ impl Collector {
         if internal {
             // Retain bounded legacy evidence across restarts; deleting it on
             // the first late hook would forget why this session was hidden.
-            let recovered = self.live.get(&sid).is_some_and(|s| s["recoveredInternal"] == true);
-            self.live.insert(sid.clone(), json!({"internal":true,"recoveredInternal":recovered}));
+            let recovered = self
+                .live
+                .get(&sid)
+                .is_some_and(|s| s["recoveredInternal"] == true);
+            self.live.insert(
+                sid.clone(),
+                json!({"internal":true,"recoveredInternal":recovered}),
+            );
             self.hub.sessions.remove(&format!("codex:{sid}"));
             if !recovered {
                 crate::codex_recovery::remove(&self.home, &self.settings, &self.integrations, &sid);
@@ -108,7 +141,9 @@ impl Collector {
             .clone()
             .unwrap_or(json!({"roundId":"","cwd":"","calls":{},"permissions":[]}));
         let turn = get("turn_id", "turnId");
-        if turn.len() > 200 { return false; }
+        if turn.len() > 200 {
+            return false;
+        }
         let begins = matches!(event.as_str(), "SessionStart" | "UserPromptSubmit");
         let round = if !turn.is_empty() {
             turn
@@ -122,15 +157,23 @@ impl Collector {
                 .unwrap_or(format!("turn:{ts}"))
         };
         if begins && previous.is_some() && state["roundId"] != round {
-            let current_ts = self.hub.sessions.get(&format!("codex:{sid}"))
-                .and_then(|s| s["updatedAt"].as_i64()).unwrap_or(0);
-            if ts <= current_ts { return false; }
+            let current_ts = self
+                .hub
+                .sessions
+                .get(&format!("codex:{sid}"))
+                .and_then(|s| s["updatedAt"].as_i64())
+                .unwrap_or(0);
+            if ts <= current_ts {
+                return false;
+            }
         }
         // Tool callbacks from an older turn cannot mutate the current one.
         if previous.is_some() && state["roundId"] != round && !begins {
             return false;
         }
-        if state["ended"] == true && state["roundId"] == round { return false; }
+        if state["ended"] == true && state["roundId"] == round {
+            return false;
+        }
         if previous.is_none() || state["roundId"] != round {
             state["calls"] = json!({});
             state["permissions"] = json!([]);
@@ -145,26 +188,24 @@ impl Collector {
         // Real prompts clear Hub optional waits, not just the per-round call
         // map: PostToolUse marks async calls resolved, and that map is then
         // pruned, while the question can still be pending.
-        let optional_ids: Vec<String> = if event == "UserPromptSubmit"
-            && !trimmed.is_empty()
-            && !trimmed.starts_with('<')
-        {
-            self.hub
-                .sessions
-                .get(&format!("codex:{sid}"))
-                .and_then(|session| session["pending"].as_array())
-                .map(|pending| {
-                    pending
-                        .iter()
-                        .filter(|item| item["optional"] == true)
-                        .map(|item| text(&item["id"]))
-                        .filter(|id| !id.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let optional_ids: Vec<String> =
+            if event == "UserPromptSubmit" && !trimmed.is_empty() && !trimmed.starts_with('<') {
+                self.hub
+                    .sessions
+                    .get(&format!("codex:{sid}"))
+                    .and_then(|session| session["pending"].as_array())
+                    .map(|pending| {
+                        pending
+                            .iter()
+                            .filter(|item| item["optional"] == true)
+                            .map(|item| text(&item["id"]))
+                            .filter(|id| !id.is_empty())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            };
         let base =
             json!({"source":"codex","sessionId":sid,"cwd":state["cwd"],"roundId":round,"ts":ts});
         let mut emit = |ev| self.hub.ingest(merge(base.clone(), ev));

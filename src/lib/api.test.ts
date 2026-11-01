@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getCreditExpiry, getStatus } from "./api";
+import { getCreditExpiry, getStatus, getTokenStatistics, webdavInfo, webdavRestore, webdavTestConnection } from "./api";
 
 /**
  * webui（浏览器）模式下的 HTTP 请求地址构造。
@@ -38,6 +38,22 @@ function stubFetch(impl?: (url: string, init?: RequestInit) => Promise<Response>
 }
 
 describe("webui httpCall URL 构造", () => {
+  it("Token 账号数据通过原有 HTTP 和 Tauri 通道透传，兼容旧响应", async () => {
+    const payload = { generatedAt: 1, sources: [{ source: "workbuddy", accounts: [{ accountId: null, accountName: "未归属" }] }] };
+    const fetchMock = stubFetch(async () => new Response(JSON.stringify(payload), { status: 200 }));
+    expect(await getTokenStatistics(7)).toEqual(payload);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/token-stats?days=7");
+
+    const invoke = vi.fn(async () => payload);
+    vi.stubGlobal("window", { __TAURI_INTERNALS__: { invoke } });
+    expect(await getTokenStatistics()).toEqual(payload);
+    expect(invoke).toHaveBeenCalledWith("get_token_statistics", {}, undefined);
+
+    const legacy = { generatedAt: 1, sources: [{ source: "workbuddy" }] };
+    invoke.mockResolvedValueOnce(legacy as typeof payload);
+    expect(await getTokenStatistics()).toEqual(legacy);
+  });
+
   it("GET 请求走相对路径并携带查询串，不写死 127.0.0.1:57890", async () => {
     const fetchMock = stubFetch();
 
@@ -87,5 +103,25 @@ describe("webui httpCall URL 构造", () => {
       "message",
       "无法连接 workbuddy-switch 服务，请先运行 `workbuddy-switch`",
     );
+  });
+
+  it("WebDAV 无参命令走 GET / POST 路由，密码仅在请求体中传递", async () => {
+    const fetchMock = stubFetch();
+
+    await webdavInfo();
+    let [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/webdav/info");
+    expect(init.method).toBe("GET");
+
+    await webdavTestConnection();
+    [url, init] = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/webdav/test");
+    expect(init.method).toBe("POST");
+
+    await webdavRestore("secret-passphrase", [0, 1], true, "fixture-snapshot");
+    [url, init] = fetchMock.mock.calls[2] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/webdav/restore");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(JSON.stringify({ passphrase: "secret-passphrase", indexes: [0, 1], restoreConfigs: true, expectedSnapshot: "fixture-snapshot" }));
   });
 });

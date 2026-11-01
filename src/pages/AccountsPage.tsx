@@ -10,6 +10,7 @@ import {
   QrCode,
   RefreshCw,
   Rows3,
+  SlidersHorizontal,
   Terminal,
 } from "lucide-react";
 
@@ -31,6 +32,13 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Dialog,
@@ -47,6 +55,7 @@ import { SwitchAccountDialog } from "@/components/switch-account-dialog";
 import { VscodeSwitchAccountDialog } from "@/components/vscode-switch-account-dialog";
 import * as api from "@/lib/api";
 import { useVisibleInterval } from "@/lib/use-visible-interval";
+import { createRateLimitLoader } from "@/lib/rate-limit-refresh";
 import {
   accountVariant,
   normalizeVariant,
@@ -59,7 +68,15 @@ import {
   variantUsesIntlCodebuddyIde,
 } from "@/lib/variant";
 import { useSupportedTools } from "@/lib/supported-tools";
-import type { AccountMeta, AppStatus, CheckinConfig, CreditExpiry, RateLimitEntry, TravelConfig, TravelStatus } from "@/lib/types";
+import {
+  ACCOUNT_SORT_OPTIONS,
+  hasExpiringSoonCredits,
+  mostRecentUsedAccountId,
+  orderAccounts,
+  useAccountSortKey,
+  type AccountSortKey,
+} from "@/lib/account-order";
+import type { AccountMeta, AppStatus, CheckinConfig, RateLimitEntry, TravelConfig, TravelStatus } from "@/lib/types";
 import { displayName } from "@/lib/account-display";
 import { cn } from "@/lib/utils";
 import { useAccountsStore } from "@/stores/accounts";
@@ -69,11 +86,10 @@ import { useAccountsStore } from "@/stores/accounts";
  *
  * - 旅行：后台派发/领取循环最快 15 分钟变一次状态，1 分钟用于及时反映"到期领取"后的显示；
  * - 限额：CLI / WorkBuddy 由后端 hook 信号实时入账并推送（`rate-limits-updated`），
- *   这里只兜底 IDE 日志扫描；后端按同一间隔节流扫描，前端再按 payload 的 `scannedAt`
- *   判断「距上次扫描 ≥ 5 分钟」才发起，避免可见性切换/页面重挂载把扫描打散。
+ *   这里每分钟读取台账；实际日志扫描由后端按 5 分钟节流，前端不按扫描时间跳过缓存读取。
  */
 const TRAVEL_REFRESH_INTERVAL_MS = 60 * 1000;
-const RATE_LIMIT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+const RATE_LIMIT_REFRESH_INTERVAL_MS = 60 * 1000;
 /**
  * CodeBuddy CLI 认证状态的重读间隔。
  *
@@ -84,32 +100,10 @@ const RATE_LIMIT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
  */
 const CLI_STATUS_REFRESH_INTERVAL_MS = 30 * 1000;
 
-function expiringSoonAmount(credit?: CreditExpiry): number {
-  return credit?.ok ? credit.expiringSoonRemaining ?? 0 : 0;
-}
-
-function hasExpiringSoonCredits(credit?: CreditExpiry): boolean {
-  return credit?.ok === true && expiringSoonAmount(credit) > 0;
-}
-
-function soonestRelevantExpiry(credit?: CreditExpiry): number {
-  const soonestExpiringCredit = (credit?.resources ?? [])
-    .filter((resource) => resource.remaining > 0 && resource.expiringSoon && resource.expireAt != null)
-    .map((resource) => resource.expireAt as number)
-    .reduce((soonest, expireAt) => Math.min(soonest, expireAt), Number.POSITIVE_INFINITY);
-  return Number.isFinite(soonestExpiringCredit)
-    ? soonestExpiringCredit
-    : credit?.soonestExpireAt ?? Number.POSITIVE_INFINITY;
-}
-
-function creditPriorityRank(credit?: CreditExpiry): number {
-  if (!credit?.ok) return 3;
-  if (hasExpiringSoonCredits(credit)) return 0;
-  if (credit.expired) return 1;
-  return 2;
-}
-
-function isWorkbuddyCurrent(account: AccountMeta, current: AppStatus["current"] | undefined): boolean {
+function isWorkbuddyCurrent(
+  account: AccountMeta,
+  current: AppStatus["current"] | undefined,
+): boolean {
   if (!current) return false;
   return Boolean(
     (current.uid && (account.uid === current.uid || account.id === current.uid)) ||
@@ -173,6 +167,7 @@ export default function AccountsPage() {
     error,
     fetchAll,
     deleteAccount,
+    reconcileAccounts,
     creditMap,
     creditLoadingMap,
     creditUpdatedAtMap,
@@ -265,6 +260,8 @@ export default function AccountsPage() {
       return true;
     }
   });
+  /** 账号列表排序方式：持久化到 localStorage，默认积分紧迫优先。 */
+  const [sortKey, setSortKey] = useAccountSortKey();
 
   /**
    * 支持工具开关（设置页）：关闭的端不渲染入口、不轮询状态。
@@ -456,33 +453,18 @@ export default function AccountsPage() {
   /**
    * 模型限额台账（后端合并两条通路）：一次返回全部账号，这里转成「账号 id -> 受限模型」。
    *
-   * 容错：老版本后端没有该命令、或扫描失败时按「无受限模型」处理（清空映射），
-   * 不弹错误、不影响账号页其它功能。
+   * 查询失败保留最近一次成功结果；请求乱序、关闭功能或卸载后的迟到响应不写回。
    */
-  const lastRateLimitScanRef = useRef(0);
+  const [rateLimitLoader] = useState(() => createRateLimitLoader(api.getRateLimits, setRateLimitMap));
+
+  useEffect(() => {
+    if (rateLimitEnabled !== true) rateLimitLoader.invalidate();
+    return () => rateLimitLoader.invalidate();
+  }, [rateLimitEnabled, rateLimitLoader]);
 
   async function loadRateLimits(options?: { force?: boolean }) {
     if (rateLimitEnabled !== true) return;
-    const scannedAt = lastRateLimitScanRef.current;
-    if (
-      !options?.force &&
-      scannedAt > 0 &&
-      Date.now() - scannedAt < RATE_LIMIT_REFRESH_INTERVAL_MS
-    ) {
-      return;
-    }
-    try {
-      const payload = await api.getRateLimits();
-      // `scannedAt` 是后端最近一次真实日志扫描的时刻：下一次扫描要等它满 5 分钟。
-      lastRateLimitScanRef.current = payload.scannedAt || Date.now();
-      const next: Record<string, RateLimitEntry[]> = {};
-      for (const entry of payload.accounts ?? []) {
-        if (entry.limited?.length) next[entry.accountId] = entry.limited;
-      }
-      setRateLimitMap(next);
-    } catch {
-      setRateLimitMap({});
-    }
+    await rateLimitLoader.refresh(options?.force);
   }
 
   const loadRateLimitsRef = useRef(loadRateLimits);
@@ -493,7 +475,7 @@ export default function AccountsPage() {
   const refreshCodebuddyCliStatusRef = useRef(refreshCodebuddyCliStatus);
   refreshCodebuddyCliStatusRef.current = refreshCodebuddyCliStatus;
 
-  // 兜底轮询：页面可见且距上次扫描 ≥ 5 分钟时拉一次（IDE 日志扫描在后端按同一间隔节流）。
+  // 页面可见时每分钟拉取，首次进入立即读缓存；实际扫描仍由后端节流。
   // 图标何时消失由卡片本地按 `resetAt` 每秒判定（跨过官方重置时刻自动消失），不依赖这里的轮询。
   useVisibleInterval(
     () => void loadRateLimits(),
@@ -720,6 +702,7 @@ export default function AccountsPage() {
     try {
       // 后端一律先关闭正在运行的 CLI 再写状态（`closeRunningCli` 入参已废弃）。
       const result = await api.switchCodebuddyCliAccount(account.id);
+      void reconcileAccounts();
       await refreshCodebuddyCliStatus();
       toast.success("CodeBuddy CLI 默认账号已更新", {
         id: toastId,
@@ -762,32 +745,17 @@ export default function AccountsPage() {
   }
 
   const current = status?.current;
-  const creditOrderingReady =
-    visibleAccounts.length > 0 &&
-    visibleAccounts.every((account) => Boolean(creditMap[account.id]) && !creditLoadingMap[account.id]);
-  const orderedAccounts = creditOrderingReady
-    ? visibleAccounts
-        .map((account, index) => ({ account, index }))
-        .sort((left, right) => {
-          const leftCredit = creditMap[left.account.id];
-          const rightCredit = creditMap[right.account.id];
-          const rankDifference = creditPriorityRank(leftCredit) - creditPriorityRank(rightCredit);
-          if (rankDifference !== 0) return rankDifference;
-
-          const leftExpiry = soonestRelevantExpiry(leftCredit);
-          const rightExpiry = soonestRelevantExpiry(rightCredit);
-          if (leftExpiry !== rightExpiry) return leftExpiry - rightExpiry;
-
-          const amountDifference = expiringSoonAmount(rightCredit) - expiringSoonAmount(leftCredit);
-          if (amountDifference !== 0) return amountDifference;
-          return left.index - right.index;
-        })
-        .map(({ account }) => account)
-    : visibleAccounts;
-  const priorityAccountId =
-    creditOrderingReady
-      ? orderedAccounts.find((account) => hasExpiringSoonCredits(creditMap[account.id]))?.id
-      : undefined;
+  const orderedAccounts = orderAccounts({
+    accounts: visibleAccounts,
+    creditMap,
+    creditLoadingMap,
+    sortKey,
+  });
+  const priorityAccountId = orderedAccounts.find((account) =>
+    hasExpiringSoonCredits(creditMap[account.id]),
+  )?.id;
+  /** 「最近切换」标记：本档位内最后一次被切为某端当前账号的那一个。 */
+  const recentUsedAccountId = mostRecentUsedAccountId(visibleAccounts);
   const cliCurrentAccountId = codebuddyCli?.activeAccountId;
   const cliSwitchAccountLabel = cliSwitchTarget ? displayName(cliSwitchTarget) : "";
   const workbuddyCurrentName = current ? displayName(current) : "未登录";
@@ -1026,6 +994,26 @@ export default function AccountsPage() {
           </div>
           <TooltipProvider delayDuration={400}>
             <div className="ml-auto flex items-center gap-1">
+              <Select
+                value={sortKey}
+                onValueChange={(value) => setSortKey(value as AccountSortKey)}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-auto min-w-32 gap-1.5 border-0 bg-transparent px-2 text-xs text-muted-foreground shadow-none hover:bg-accent hover:text-foreground"
+                  aria-label="账号排序方式"
+                >
+                  <SlidersHorizontal className="size-4" aria-hidden="true" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ACCOUNT_SORT_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -1103,6 +1091,7 @@ export default function AccountsPage() {
                 creditLoading={creditLoadingMap[a.id]}
                 creditUpdatedAt={creditUpdatedAtMap[a.id]}
                 creditPriority={a.id === priorityAccountId}
+                mostRecentlyUsed={a.id === recentUsedAccountId}
                 workbuddyActive={enabledTools.workbuddy && isWorkbuddyCurrent(a, current)}
                 codebuddyCliConfigured={codebuddyCli?.configured && !codebuddyCli.migrationRequired && !codebuddyCli.syncPending && !codebuddyCli.syncInProgress}
                 codebuddyCliActive={enabledTools.codebuddyCli && a.id === cliCurrentAccountId}
@@ -1177,6 +1166,8 @@ export default function AccountsPage() {
         variant={variant}
         ideStatus={codebuddyCnIde}
         onDone={() => {
+          // 重读账号库：卡片上的「最近切换」标记随切换结果更新。
+          void reconcileAccounts();
           void refreshCodebuddyCnIdeStatus();
         }}
       />
@@ -1188,6 +1179,7 @@ export default function AccountsPage() {
         account={vscodeSwitchAccount}
         vscodeExtStatus={vscodeExt}
         onDone={() => {
+          void reconcileAccounts();
           void refreshVscodeExtStatus();
         }}
       />
@@ -1199,6 +1191,7 @@ export default function AccountsPage() {
         account={jetbrainsSwitchTarget}
         jetbrainsStatus={jetbrains}
         onDone={() => {
+          void reconcileAccounts();
           void refreshJetbrainsStatus();
         }}
       />

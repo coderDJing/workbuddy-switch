@@ -20,6 +20,7 @@ fn worker() {
         assert!(account::save_collected_account(incoming.clone()).is_err());
         assert!(account::upsert_account(&incoming).is_err());
         assert!(account::update_account_display("kept", &json!({"note":"x"})).is_err());
+        assert!(account::mark_used("kept", account::USED_CLIENT_CODEBUDDY_CLI).is_err());
         assert!(account::delete_account("kept").is_err());
         assert!(
             export_import::import_accounts(&json!([incoming.clone()]).to_string(), &[0]).is_err()

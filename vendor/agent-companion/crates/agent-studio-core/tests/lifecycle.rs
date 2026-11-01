@@ -1,12 +1,6 @@
-use agent_studio_core::{
-    adapters::Collector,
-    atomic_json,
-    hub::Hub,
-    now, settings,
-    tail::Tail,
-};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use agent_studio_core::host_process::{HostPresence, Presence};
+use agent_studio_core::{adapters::Collector, atomic_json, hub::Hub, now, settings, tail::Tail};
 use serde_json::json;
 use std::path::PathBuf;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -53,14 +47,25 @@ fn anonymous_approval_reconciles_replayed_continuation_without_clearing_question
         json!({"type":"tokens","ts":200}),
         json!({"type":"activity","ts":109}),
     ] {
-        h.ingest(agent_studio_core::merge(json!({"source":"codex","sessionId":"x"}),ev));
+        h.ingest(agent_studio_core::merge(
+            json!({"source":"codex","sessionId":"x"}),
+            ev,
+        ));
     }
-    assert_eq!(h.sessions["codex:x"]["pending"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        h.sessions["codex:x"]["pending"].as_array().unwrap().len(),
+        2
+    );
     h.ingest(json!({"source":"codex","sessionId":"x","type":"activity","ts":120}));
     assert_eq!(h.sessions["codex:x"]["pending"][0]["id"], "question");
-    assert_eq!(h.sessions["codex:x"]["pending"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        h.sessions["codex:x"]["pending"].as_array().unwrap().len(),
+        1
+    );
     assert_eq!(h.sessions["codex:x"]["status"], "wait");
-    h.ingest(json!({"source":"codex","sessionId":"x","type":"resolve","callId":"question","ts":201}));
+    h.ingest(
+        json!({"source":"codex","sessionId":"x","type":"resolve","callId":"question","ts":201}),
+    );
     h.ingest(json!({"source":"codex","sessionId":"x","type":"wait","callId":"perm:210","ts":210}));
     h.ingest(json!({"source":"codex","sessionId":"x","type":"tokens","ts":250}));
     h.ingest(json!({"source":"codex","sessionId":"x","type":"activity","ts":220}));
@@ -232,15 +237,15 @@ fn workbuddy_permission_and_notification_become_wait() {
     })));
     assert_eq!(c.hub.sessions["workbuddy:n"]["status"], "wait");
     assert_eq!(
-        agent_studio_core::adapters::workbuddy_edition(
-            &std::path::Path::new("/tmp/.workbuddy-ai/settings.json")
-        ),
+        agent_studio_core::adapters::workbuddy_edition(&std::path::Path::new(
+            "/tmp/.workbuddy-ai/settings.json"
+        )),
         "international"
     );
     assert_eq!(
-        agent_studio_core::adapters::workbuddy_edition(
-            &std::path::Path::new("/tmp/.workbuddy/settings.json")
-        ),
+        agent_studio_core::adapters::workbuddy_edition(&std::path::Path::new(
+            "/tmp/.workbuddy/settings.json"
+        )),
         "domestic"
     );
 }
@@ -359,20 +364,29 @@ fn workbuddy_log_watch_idles_without_active_sessions() {
 }
 #[test]
 fn codeg_never_scans_existing_conversations() {
-    let home=Home::new();
-    let dir=home.0.join("Library/Application Support/app.codeg");
+    let home = Home::new();
+    let dir = home.0.join("Library/Application Support/app.codeg");
     std::fs::create_dir_all(&dir).unwrap();
-    let db=rusqlite::Connection::open(dir.join("codeg.db")).unwrap();
+    let db = rusqlite::Connection::open(dir.join("codeg.db")).unwrap();
     db.execute_batch("CREATE TABLE conversation(id TEXT,status TEXT); INSERT INTO conversation VALUES('old','running');").unwrap();
-    let mut c=home.collector("codeg");
-    c.poll();c.poll();
+    let mut c = home.collector("codeg");
+    c.poll();
+    c.poll();
     assert!(c.hub.sessions.is_empty());
-    for (event,status) in [("user_prompt_sent","running"),("question_request","wait"),("turn_complete","done"),("user_prompt_sent","running"),("error","error")] {
+    for (event, status) in [
+        ("user_prompt_sent", "running"),
+        ("question_request", "wait"),
+        ("turn_complete", "done"),
+        ("user_prompt_sent", "running"),
+        ("error", "error"),
+    ] {
         assert!(c.ingest_hook(&json!({"source":"codeg","connection_id":"c","event":event,"body":"hello","fields":[{"label":"Question","value":"Pick A"}]})));
-        assert_eq!(c.hub.sessions["codeg:connection:c"]["status"],status);
+        assert_eq!(c.hub.sessions["codeg:connection:c"]["status"], status);
     }
-    c.settings["sources"]["codeg"]["enabled"]=json!(false);
-    assert!(!c.ingest_hook(&json!({"source":"codeg","connection_id":"c","event":"user_prompt_sent"})));
+    c.settings["sources"]["codeg"]["enabled"] = json!(false);
+    assert!(
+        !c.ingest_hook(&json!({"source":"codeg","connection_id":"c","event":"user_prompt_sent"}))
+    );
 }
 
 /// Minimal loopback Codeg API so the native startup alignment can be exercised
@@ -491,7 +505,10 @@ impl CodegApi {
         self.state.lock().unwrap().calls.clone()
     }
     fn lists(&self) -> usize {
-        self.calls().iter().filter(|m| *m == "acp_list_connections").count()
+        self.calls()
+            .iter()
+            .filter(|m| *m == "acp_list_connections")
+            .count()
     }
 }
 /// Codeg database with credentials plus the conversations used by the fixtures.
@@ -527,12 +544,18 @@ fn codeg_startup_alignment_recovers_prompting_connections() {
     assert!(!c.is_codeg_child_codex("thr-native"));
     c.poll();
     let session = c.hub.sessions["codeg:214"].clone();
-    assert_eq!(session["status"], "wait", "an in-flight session is seeded without a new event");
+    assert_eq!(
+        session["status"], "wait",
+        "an in-flight session is seeded without a new event"
+    );
     assert_eq!(session["title"], "Build feature");
     assert_eq!(session["cwd"], "/project/test");
     assert_eq!(session["pending"][0]["id"], "q1");
     assert_eq!(session["pending"][0]["text"], "Pick");
-    assert_eq!(session["pending"][0]["questions"][0]["options"][1]["label"], "B");
+    assert_eq!(
+        session["pending"][0]["questions"][0]["options"][1]["label"],
+        "B"
+    );
     let snapshot = c.hub.snapshot();
     let wait = snapshot["events"]
         .as_array()
@@ -547,11 +570,15 @@ fn codeg_startup_alignment_recovers_prompting_connections() {
     c.poll();
     assert_eq!(api.lists(), 1);
     // A late completion webhook cannot end the recovered round.
-    assert!(c.ingest_hook(&json!({"source":"codeg","connection_id":"connection-1","event":"turn_complete"})));
+    assert!(c.ingest_hook(
+        &json!({"source":"codeg","connection_id":"connection-1","event":"turn_complete"})
+    ));
     assert_eq!(c.hub.sessions["codeg:214"]["status"], "wait");
     // The alignment records the connection, so a stale snapshot never invents a duplicate.
     api.set_snapshot("connection-1", serde_json::Value::Null);
-    assert!(c.ingest_hook(&json!({"source":"codeg","connection_id":"connection-1","event":"question_request"})));
+    assert!(c.ingest_hook(
+        &json!({"source":"codeg","connection_id":"connection-1","event":"question_request"})
+    ));
     assert_eq!(c.hub.sessions.len(), 1);
     assert!(c.hub.sessions.contains_key("codeg:214"));
 }
@@ -565,13 +592,27 @@ fn codeg_startup_alignment_seeds_prompting_without_pending_as_running() {
     let mut c = codeg_home(&home, api.port);
     c.poll();
     let session = c.hub.sessions["codeg:214"].clone();
-    assert_eq!(session["status"], "running", "a prompting session without pending requests is seeded as running");
+    assert_eq!(
+        session["status"], "running",
+        "a prompting session without pending requests is seeded as running"
+    );
     assert!(session["pending"].as_array().unwrap().is_empty());
     assert_eq!(session["title"], "Build feature");
     assert_eq!(session["cwd"], "/project/test");
     let snapshot = c.hub.snapshot();
-    assert_eq!(snapshot["sessions"].as_array().unwrap().len(), 1, "the recovered session is visible");
-    assert!(snapshot["events"].as_array().unwrap().iter().all(|e| e["kind"] != "wait"), "no pending request means no wait event");
+    assert_eq!(
+        snapshot["sessions"].as_array().unwrap().len(),
+        1,
+        "the recovered session is visible"
+    );
+    assert!(
+        snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["kind"] != "wait"),
+        "no pending request means no wait event"
+    );
 }
 
 #[test]
@@ -583,10 +624,17 @@ fn codeg_startup_alignment_seeds_connected_connection_with_pending() {
     let mut c = codeg_home(&home, api.port);
     c.poll();
     let session = c.hub.sessions["codeg:214"].clone();
-    assert_eq!(session["status"], "wait", "a pending request outranks the connected status");
+    assert_eq!(
+        session["status"], "wait",
+        "a pending request outranks the connected status"
+    );
     assert_eq!(session["pending"][0]["id"], "q7");
     assert_eq!(session["pending"][0]["text"], "Keep waiting?");
-    assert!(c.hub.snapshot()["events"].as_array().unwrap().iter().any(|e| e["kind"] == "wait"));
+    assert!(c.hub.snapshot()["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["kind"] == "wait"));
 }
 
 #[test]
@@ -594,17 +642,30 @@ fn codeg_startup_alignment_skips_idle_child_and_snapshot_less_connections() {
     let home = Home::new();
     let api = CodegApi::start();
     api.set_connections(json!([{"id":"idle"},{"id":"child"},{"id":"orphan"},{"id":""}]));
-    api.set_snapshot("idle",json!({"conversation_id":216,"status":"connected","event_seq":3}));
+    api.set_snapshot(
+        "idle",
+        json!({"conversation_id":216,"status":"connected","event_seq":3}),
+    );
     api.set_snapshot("child",json!({"conversation_id":215,"status":"prompting","event_seq":4,"pending_question":{"question_id":"q9","questions":[{"question":"Child?"}]}}));
-    api.set_snapshot("orphan",json!({"status":"prompting","event_seq":5}));
+    api.set_snapshot("orphan", json!({"status":"prompting","event_seq":5}));
     let mut c = codeg_home(&home, api.port);
     c.hub.ingest(json!({"source":"codex","sessionId":"thr-child","type":"start","roundId":"r1","cwd":"/project/test"}));
     c.hub.ingest(json!({"source":"codex","sessionId":"thr-child","type":"wait","roundId":"r1","callId":"ask","text":"Child question"}));
     c.poll();
-    assert_eq!(c.hub.sessions.len(),1,"the child Codex hook is retained internally");
-    assert!(c.hub.snapshot()["sessions"].as_array().unwrap().is_empty(),"the child Codex hook is hidden from the rail");
+    assert_eq!(
+        c.hub.sessions.len(),
+        1,
+        "the child Codex hook is retained internally"
+    );
+    assert!(
+        c.hub.snapshot()["sessions"].as_array().unwrap().is_empty(),
+        "the child Codex hook is hidden from the rail"
+    );
     assert!(c.hub.snapshot()["events"].as_array().unwrap().is_empty());
-    assert!(!c.ingest_codeg_stream(&json!({"type":"event","connection_id":"child"})),"skipped connections are never subscribed");
+    assert!(
+        !c.ingest_codeg_stream(&json!({"type":"event","connection_id":"child"})),
+        "skipped connections are never subscribed"
+    );
 }
 
 #[test]
@@ -615,7 +676,7 @@ fn codeg_child_codex_hook_is_hidden_before_codeg_callback() {
     assert!(c.ingest_hook(&json!({"session_id":"thr-child","hook_event_name":"UserPromptSubmit","prompt":"Child work"})));
     assert!(c.hub.snapshot()["sessions"].as_array().unwrap().is_empty());
     assert!(c.ingest_hook(&json!({"session_id":"native-cli","hook_event_name":"UserPromptSubmit","prompt":"Independent work"})));
-    assert_eq!(c.hub.snapshot()["sessions"].as_array().unwrap().len(),1);
+    assert_eq!(c.hub.snapshot()["sessions"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -626,10 +687,15 @@ fn codeg_startup_alignment_never_restarts_a_known_round() {
     api.set_snapshot("connection-1",json!({"conversation_id":214,"status":"prompting","event_seq":30,"pending_question":{"question_id":"q1","questions":[{"question":"Pick"}]}}));
     let mut c = codeg_home(&home, api.port);
     // A webhook won the race: the hub already owns this round.
-    c.hub.ingest(json!({"source":"codeg","sessionId":"214","type":"start","roundId":"hook:1:1","ts":1}));
+    c.hub.ingest(
+        json!({"source":"codeg","sessionId":"214","type":"start","roundId":"hook:1:1","ts":1}),
+    );
     c.poll();
     assert_eq!(c.hub.sessions["codeg:214"]["roundId"], "hook:1:1");
-    assert!(c.hub.sessions["codeg:214"]["pending"].as_array().unwrap().is_empty());
+    assert!(c.hub.sessions["codeg:214"]["pending"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     // Re-enabling the integration re-arms exactly one more alignment.
     let before = api.lists();
     c.configure_codeg_webhook("http://127.0.0.1:1/api/codeg-webhook/test".into());
@@ -645,7 +711,10 @@ fn codeg_startup_alignment_failure_only_degrades_health() {
     api.set_fail_list(true);
     let mut c = codeg_home(&home, api.port);
     c.poll();
-    assert!(c.codeg.registered,"registration survives an alignment failure");
+    assert!(
+        c.codeg.registered,
+        "registration survives an alignment failure"
+    );
     assert_eq!(c.hub.sources["codeg"]["state"], "error");
     assert_eq!(c.hub.sources["codeg"]["detail"], "Codeg Web Service 不可用");
     assert!(c.hub.sessions.is_empty());
@@ -653,7 +722,11 @@ fn codeg_startup_alignment_failure_only_degrades_health() {
     api.set_fail_list(false);
     let calls = api.calls().len();
     c.poll();
-    assert_eq!(api.calls().len(), calls, "no retry storm and no second scan");
+    assert_eq!(
+        api.calls().len(),
+        calls,
+        "no retry storm and no second scan"
+    );
     assert_eq!(api.lists(), 1);
 }
 
@@ -663,13 +736,26 @@ fn ide_hooks_only_lifecycle_and_shared_cli_filter() {
     let mut c = home.collector("codebuddy-ide");
     c.poll();
     assert!(c.hub.sessions.is_empty());
-    assert!(!c.ingest_hook(&json!({"agent_source":"codebuddy-ide","session_id":"cli","hook_event_name":"UserPromptSubmit","client":"cli"})));
-    let cases: serde_json::Value = serde_json::from_str(include_str!("../../../tests/fixtures/codebuddy-ide-hooks.json")).unwrap();
+    // 未知来源仍被拒；CodeBuddy CLI 的 client("CLI" → 小写 "cli") 现已纳入白名单。
+    assert!(!c.ingest_hook(&json!({"agent_source":"codebuddy-ide","session_id":"unknown","hook_event_name":"UserPromptSubmit","client":"unknown"})));
+    assert!(c.ingest_hook(&json!({"agent_source":"codebuddy-ide","session_id":"cli","hook_event_name":"UserPromptSubmit","client":"cli"})));
+    let cases: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/codebuddy-ide-hooks.json"
+    ))
+    .unwrap();
     let t = now();
     for (i, case) in cases.as_array().unwrap().iter().enumerate() {
-        let p = agent_studio_core::merge(json!({"agent_source":"codebuddy-ide","client":"CodeBuddyIDE","session_id":"x","cwd":"/project","timestamp":t+i as i64}), case["hook"].clone());
+        let p = agent_studio_core::merge(
+            json!({"agent_source":"codebuddy-ide","client":"CodeBuddyIDE","session_id":"x","cwd":"/project","timestamp":t+i as i64}),
+            case["hook"].clone(),
+        );
         assert_eq!(c.ingest_hook(&p), case["accepted"] != false, "case {i}");
-        let status = c.hub.sessions.get("codebuddy-ide:x").map(|s|s["status"].clone()).unwrap_or_default();
+        let status = c
+            .hub
+            .sessions
+            .get("codebuddy-ide:x")
+            .map(|s| s["status"].clone())
+            .unwrap_or_default();
         assert_eq!(status, case["status"], "case {i}");
     }
     let mut restarted = home.collector("codebuddy-ide");
@@ -689,7 +775,10 @@ fn ide_hooks_stamp_international_and_domestic_editions() {
         "hook_event_name":"UserPromptSubmit",
         "agent_edition":"international"
     })));
-    assert_eq!(c.hub.sessions["codebuddy-ide:intl"]["agentType"], "codebuddy");
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:intl"]["agentType"],
+        "codebuddy"
+    );
     assert!(c.ingest_hook(&json!({
         "agent_source":"codebuddy-ide",
         "client":"CodeBuddyIDE",
@@ -697,7 +786,10 @@ fn ide_hooks_stamp_international_and_domestic_editions() {
         "hook_event_name":"UserPromptSubmit",
         "agent_edition":"domestic"
     })));
-    assert_eq!(c.hub.sessions["codebuddy-ide:cn"]["agentType"], "codebuddycn");
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:cn"]["agentType"],
+        "codebuddycn"
+    );
     std::fs::create_dir_all(home.0.join(".codebuddy")).unwrap();
     std::fs::create_dir_all(home.0.join(".codebuddycn")).unwrap();
     let files = agent_studio_core::adapters::codebuddy_settings_files(&home.0, "");
@@ -717,18 +809,141 @@ fn ide_hooks_stamp_international_and_domestic_editions() {
         "domestic"
     );
 }
+
+/// 客户端弹权限确认（Notification/permission_prompt）应进入「待确认」，
+/// 工具真正执行后清除；非权限类通知不产生待确认。
+#[test]
+fn ide_permission_notification_maps_to_wait() {
+    let home = Home::new();
+    let mut c = home.collector("codebuddy-ide");
+    let t = now();
+    let hook = |c: &mut Collector, event: &str, extra: serde_json::Value, ts: i64| {
+        c.ingest_hook(&agent_studio_core::merge(
+            json!({
+                "agent_source":"codebuddy-ide","client":"CodeBuddyIDE","session_id":"perm",
+                "cwd":"/project","timestamp":ts,"hook_event_name":event
+            }),
+            extra,
+        ))
+    };
+    assert!(hook(
+        &mut c,
+        "UserPromptSubmit",
+        json!({"prompt":"do it"}),
+        t
+    ));
+    assert!(hook(
+        &mut c,
+        "PreToolUse",
+        json!({"tool_name":"Bash","tool_use_id":"call-1"}),
+        t + 1
+    ));
+    assert_eq!(c.hub.sessions["codebuddy-ide:perm"]["status"], "running");
+    assert!(hook(
+        &mut c,
+        "Notification",
+        json!({"notification_type":"permission_prompt","message":"needs your permission to use Bash"}),
+        t + 2
+    ));
+    let session = &c.hub.sessions["codebuddy-ide:perm"];
+    assert_eq!(session["status"], "wait");
+    assert_eq!(
+        session["pending"][0]["text"],
+        "needs your permission to use Bash"
+    );
+    // 工具真正跑起来 → 弹窗已被处理，回到运行中。
+    assert!(hook(
+        &mut c,
+        "PostToolUse",
+        json!({"tool_name":"Bash","tool_use_id":"call-1","tool_response":{}}),
+        t + 3
+    ));
+    let session = &c.hub.sessions["codebuddy-ide:perm"];
+    assert_eq!(session["status"], "running");
+    assert!(session["pending"].as_array().unwrap().is_empty());
+    // 非权限通知（如等待输入）不产生待确认。
+    assert!(hook(
+        &mut c,
+        "Notification",
+        json!({"notification_type":"idle_prompt","message":"waiting for input"}),
+        t + 4
+    ));
+    assert_eq!(c.hub.sessions["codebuddy-ide:perm"]["status"], "running");
+}
+
+/// 客户端新建/切换会话都会发 SessionEnd，但它不该把仍在后台跑的会话置为「已终止」，
+/// 否则多会话无法并行显示。
+#[test]
+fn ide_session_end_does_not_abort_a_running_round() {
+    let home = Home::new();
+    let mut c = home.collector("codebuddy-ide");
+    let t = now();
+    let hook = |c: &mut Collector, sid: &str, event: &str, extra: serde_json::Value, ts: i64| {
+        c.ingest_hook(&agent_studio_core::merge(
+            json!({
+                "agent_source":"codebuddy-ide","client":"vscode","session_id":sid,
+                "cwd":"/project","timestamp":ts,"hook_event_name":event
+            }),
+            extra,
+        ))
+    };
+    assert!(hook(
+        &mut c,
+        "a",
+        "UserPromptSubmit",
+        json!({"prompt":"长任务"}),
+        t
+    ));
+    assert!(hook(
+        &mut c,
+        "a",
+        "PreToolUse",
+        json!({"tool_name":"Bash"}),
+        t + 1
+    ));
+    assert_eq!(c.hub.sessions["codebuddy-ide:a"]["status"], "running");
+    // 新建另一个会话；客户端会对旧会话（或错发的 id）抛 SessionEnd。
+    assert!(hook(
+        &mut c,
+        "b",
+        "UserPromptSubmit",
+        json!({"prompt":"新会话"}),
+        t + 2
+    ));
+    assert!(hook(
+        &mut c,
+        "a",
+        "SessionEnd",
+        json!({"reason":"other"}),
+        t + 3
+    ));
+    assert_eq!(c.hub.sessions["codebuddy-ide:a"]["status"], "running");
+    assert_eq!(c.hub.sessions["codebuddy-ide:b"]["status"], "running");
+    // 回合真正结束才收敛为 done，且互不影响。
+    assert!(hook(&mut c, "a", "Stop", json!({}), t + 4));
+    assert_eq!(c.hub.sessions["codebuddy-ide:a"]["status"], "done");
+    assert_eq!(c.hub.sessions["codebuddy-ide:b"]["status"], "running");
+}
 #[test]
 fn ide_hook_merge_preserves_user_handlers_and_is_idempotent() {
     use agent_studio_core::adapters::{merge_codebuddy_ide_hooks, CODEBUDDY_IDE_HOOK_EVENTS};
     let user = json!({"hooks":{"Stop":[{"hooks":[{"command":"echo keep"}]}],"FinalStop":[{"hooks":[{"command":"echo final"}]}]},"custom":true});
     let command = "'/tmp/agent-studio-runtime-v1' hook --source codebuddy-ide";
     let merged = merge_codebuddy_ide_hooks(user.clone(), command).unwrap();
-    assert_eq!(merged["hooks"]["Stop"][0],user["hooks"]["Stop"][0]);
-    assert_eq!(merged["hooks"]["FinalStop"],user["hooks"]["FinalStop"]);
-    assert_eq!(merged["custom"],true);
-    assert_eq!(merge_codebuddy_ide_hooks(merged.clone(), command).unwrap(),merged);
-    for e in CODEBUDDY_IDE_HOOK_EVENTS { assert_eq!(merged["hooks"][e].as_array().unwrap().last().unwrap()["hooks"][0]["command"], command); }
-    assert!(merge_codebuddy_ide_hooks(json!({"hooks":{"Stop":{}}}),command).is_err());
+    assert_eq!(merged["hooks"]["Stop"][0], user["hooks"]["Stop"][0]);
+    assert_eq!(merged["hooks"]["FinalStop"], user["hooks"]["FinalStop"]);
+    assert_eq!(merged["custom"], true);
+    assert_eq!(
+        merge_codebuddy_ide_hooks(merged.clone(), command).unwrap(),
+        merged
+    );
+    for e in CODEBUDDY_IDE_HOOK_EVENTS {
+        assert_eq!(
+            merged["hooks"][e].as_array().unwrap().last().unwrap()["hooks"][0]["command"],
+            command
+        );
+    }
+    assert!(merge_codebuddy_ide_hooks(json!({"hooks":{"Stop":{}}}), command).is_err());
 }
 
 #[test]
@@ -754,26 +969,44 @@ fn codex_session_start_source_is_not_treated_as_agent_source() {
 fn codex_hook_lifecycle_restores_only_tracked_sessions() {
     let home = Home::new();
     let mut c = home.collector("codex");
-    let fixture: serde_json::Value = serde_json::from_str(include_str!("../../../tests/fixtures/codex-hooks.json")).unwrap();
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../../tests/fixtures/codex-hooks.json")).unwrap();
     let t = now();
     let transcript = home.0.join("transcript.jsonl");
     std::fs::write(&transcript, format!("{}\n",json!({"type":"event_msg","timestamp":t+9999,"payload":{"type":"task_complete","turn_id":"r"}}))).unwrap();
     let checkpoint = home.0.join(".agent-studio/codex-resume.json");
     let old = json!({"sessions":[{"source":"codex","sessionId":"old","id":"codex:old","status":"running","roundId":"r","updatedAt":t,"steps":[],"pending":[]}]}).to_string();
     std::fs::write(&checkpoint, &old).unwrap();
-    for (i,case) in fixture.as_array().unwrap().iter().enumerate() {
-        let hook=agent_studio_core::merge(json!({"session_id":"x","turn_id":"r","cwd":"/project","timestamp":t+i as i64,"transcript_path":transcript}),case["hook"].clone());
+    for (i, case) in fixture.as_array().unwrap().iter().enumerate() {
+        let hook = agent_studio_core::merge(
+            json!({"session_id":"x","turn_id":"r","cwd":"/project","timestamp":t+i as i64,"transcript_path":transcript}),
+            case["hook"].clone(),
+        );
         c.ingest_hook(&hook);
         c.poll();
-        assert_eq!(c.hub.sessions["codex:x"]["status"],case["status"],"case {i}");
-        assert_eq!(c.hub.sessions["codex:x"]["pending"].as_array().unwrap().len(),case["pending"].as_u64().unwrap() as usize,"case {i}");
+        assert_eq!(
+            c.hub.sessions["codex:x"]["status"], case["status"],
+            "case {i}"
+        );
+        assert_eq!(
+            c.hub.sessions["codex:x"]["pending"]
+                .as_array()
+                .unwrap()
+                .len(),
+            case["pending"].as_u64().unwrap() as usize,
+            "case {i}"
+        );
     }
-    assert_eq!(std::fs::read_to_string(&checkpoint).unwrap(),old);
-    let mut restarted=Collector::new(home.0.clone()).unwrap();restarted.poll();
+    assert_eq!(std::fs::read_to_string(&checkpoint).unwrap(), old);
+    let mut restarted = Collector::new(home.0.clone()).unwrap();
+    restarted.poll();
     assert_eq!(restarted.hub.sessions.len(), 1);
     assert_eq!(restarted.hub.sessions["codex:x"]["status"], "done");
     assert_eq!(restarted.hub.sessions["codex:x"]["recovered"], true);
-    assert!(restarted.hub.snapshot()["events"].as_array().unwrap().is_empty());
+    assert!(restarted.hub.snapshot()["events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     assert!(!restarted.hub.sessions.contains_key("codex:old"));
 }
 
@@ -821,13 +1054,37 @@ fn codex_monitor_close_forgets_only_matching_round_and_next_hook_recreates_it() 
     assert!(collector.ingest_hook(&json!({"session_id":"tracked","turn_id":"one","hook_event_name":"UserPromptSubmit","timestamp":timestamp})));
     assert!(collector.ingest_hook(&json!({"session_id":"other","turn_id":"other-round","hook_event_name":"UserPromptSubmit","timestamp":timestamp})));
     assert!(collector.ingest_hook(&json!({"session_id":"tracked","turn_id":"one","hook_event_name":"PreToolUse","tool_name":"request_user_input","tool_use_id":"ask","timestamp":timestamp+1})));
-    assert!(collector.hub.events.iter().any(|event| event["sessionId"] == "codex:tracked"));
-    assert_eq!(collector.request("session_monitor_close", &json!({"source":"codex","sessionId":"tracked","roundId":"stale"})).unwrap(), json!({"closed":false}));
+    assert!(collector
+        .hub
+        .events
+        .iter()
+        .any(|event| event["sessionId"] == "codex:tracked"));
+    assert_eq!(
+        collector
+            .request(
+                "session_monitor_close",
+                &json!({"source":"codex","sessionId":"tracked","roundId":"stale"})
+            )
+            .unwrap(),
+        json!({"closed":false})
+    );
     assert_eq!(collector.hub.sessions["codex:tracked"]["roundId"], "one");
-    assert_eq!(collector.request("session_monitor_close", &json!({"source":"codex","sessionId":"tracked","roundId":"one"})).unwrap(), json!({"closed":true}));
+    assert_eq!(
+        collector
+            .request(
+                "session_monitor_close",
+                &json!({"source":"codex","sessionId":"tracked","roundId":"one"})
+            )
+            .unwrap(),
+        json!({"closed":true})
+    );
     assert!(!collector.hub.sessions.contains_key("codex:tracked"));
     assert!(!collector.live.contains_key("tracked"));
-    assert!(!collector.hub.events.iter().any(|event| event["sessionId"] == "codex:tracked" && event["roundId"] == "one"));
+    assert!(!collector
+        .hub
+        .events
+        .iter()
+        .any(|event| event["sessionId"] == "codex:tracked" && event["roundId"] == "one"));
     assert!(collector.hub.sessions.contains_key("codex:other"));
     drop(collector);
     assert!(!agent_studio_core::codex_recovery::record_offline_terminal(&home.0, &json!({"session_id":"tracked","turn_id":"one","hook_event_name":"Stop","timestamp":timestamp+2})).unwrap());
@@ -849,35 +1106,97 @@ fn session_monitor_close_targets_only_selected_source_session_and_round() {
         })));
     }
     collector.hub.ingest(json!({"source":"codebuddy-ide","sessionId":"selected","type":"start","roundId":"round-one","ts":now()}));
-    assert_eq!(collector.request("session_monitor_close", &json!({"source":"codebuddy-ide","sessionId":"selected","roundId":"wrong"})).unwrap(), json!({"closed":false}));
-    assert_eq!(collector.request("session_monitor_close", &json!({"source":"workbuddy","sessionId":"selected","roundId":"round-one"})).unwrap(), json!({"closed":true}));
+    assert_eq!(
+        collector
+            .request(
+                "session_monitor_close",
+                &json!({"source":"codebuddy-ide","sessionId":"selected","roundId":"wrong"})
+            )
+            .unwrap(),
+        json!({"closed":false})
+    );
+    assert_eq!(
+        collector
+            .request(
+                "session_monitor_close",
+                &json!({"source":"workbuddy","sessionId":"selected","roundId":"round-one"})
+            )
+            .unwrap(),
+        json!({"closed":true})
+    );
     assert!(!collector.hub.sessions.contains_key("workbuddy:selected"));
     assert!(!collector.workbuddy_live.contains_key("selected"));
     assert!(collector.hub.sessions.contains_key("workbuddy:other"));
-    assert!(collector.hub.sessions.contains_key("codebuddy-ide:selected"));
-    assert!(!collector.ingest_workbuddy_hook(&json!({"session_id":"selected","hook_event_name":"Stop","turn_id":"round-one"})));
+    assert!(collector
+        .hub
+        .sessions
+        .contains_key("codebuddy-ide:selected"));
+    assert!(!collector.ingest_workbuddy_hook(
+        &json!({"session_id":"selected","hook_event_name":"Stop","turn_id":"round-one"})
+    ));
     assert!(!collector.hub.sessions.contains_key("workbuddy:selected"));
-    assert!(collector.ingest_workbuddy_hook(&json!({"session_id":"selected","hook_event_name":"UserPromptSubmit","turn_id":"round-two"})));
-    assert_eq!(collector.hub.sessions["workbuddy:selected"]["roundId"], "round-two");
-    assert_eq!(collector.request("session_monitor_close", &json!({"source":"codebuddy-ide","sessionId":"selected","roundId":"round-one"})).unwrap(), json!({"closed":true}));
-    assert!(!collector.hub.sessions.contains_key("codebuddy-ide:selected"));
+    assert!(collector.ingest_workbuddy_hook(
+        &json!({"session_id":"selected","hook_event_name":"UserPromptSubmit","turn_id":"round-two"})
+    ));
+    assert_eq!(
+        collector.hub.sessions["workbuddy:selected"]["roundId"],
+        "round-two"
+    );
+    assert_eq!(
+        collector
+            .request(
+                "session_monitor_close",
+                &json!({"source":"codebuddy-ide","sessionId":"selected","roundId":"round-one"})
+            )
+            .unwrap(),
+        json!({"closed":true})
+    );
+    assert!(!collector
+        .hub
+        .sessions
+        .contains_key("codebuddy-ide:selected"));
 }
 
 #[test]
 fn session_monitor_close_handles_codeg_and_custom_without_disabling_sources() {
     let home = Home::new();
     let mut collector = home.collector("codeg");
-    collector.hub.ingest(json!({"source":"codeg","sessionId":"one","type":"start","roundId":"r1","ts":now()}));
-    collector.hub.ingest(json!({"source":"codeg","sessionId":"two","type":"start","roundId":"r2","ts":now()}));
-    assert_eq!(collector.request("session_monitor_close", &json!({"source":"codeg","sessionId":"one","roundId":"r1"})).unwrap(), json!({"closed":true}));
+    collector.hub.ingest(
+        json!({"source":"codeg","sessionId":"one","type":"start","roundId":"r1","ts":now()}),
+    );
+    collector.hub.ingest(
+        json!({"source":"codeg","sessionId":"two","type":"start","roundId":"r2","ts":now()}),
+    );
+    assert_eq!(
+        collector
+            .request(
+                "session_monitor_close",
+                &json!({"source":"codeg","sessionId":"one","roundId":"r1"})
+            )
+            .unwrap(),
+        json!({"closed":true})
+    );
     assert!(!collector.hub.sessions.contains_key("codeg:one"));
     assert!(collector.hub.sessions.contains_key("codeg:two"));
     assert_eq!(collector.settings["sources"]["codeg"]["enabled"], true);
 
     collector.hub.ingest(json!({"source":"custom:sample","sessionId":"one","type":"start","roundId":"r1","ts":now()}));
-    assert_eq!(collector.request("session_monitor_close", &json!({"source":"custom:sample","sessionId":"one","roundId":"r1"})).unwrap(), json!({"closed":true}));
+    assert_eq!(
+        collector
+            .request(
+                "session_monitor_close",
+                &json!({"source":"custom:sample","sessionId":"one","roundId":"r1"})
+            )
+            .unwrap(),
+        json!({"closed":true})
+    );
     assert!(!collector.hub.sessions.contains_key("custom:sample:one"));
-    assert!(collector.request("session_monitor_close", &json!({"source":"custom:INVALID","sessionId":"one","roundId":"r1"})).is_err());
+    assert!(collector
+        .request(
+            "session_monitor_close",
+            &json!({"source":"custom:INVALID","sessionId":"one","roundId":"r1"})
+        )
+        .is_err());
 }
 
 #[test]
@@ -888,11 +1207,20 @@ fn codex_monitor_close_error_preserves_memory_and_recovery() {
     let lock = home.0.join(".agent-studio/codex-recovery-v1.lock");
     std::fs::remove_file(&lock).unwrap();
     std::fs::create_dir(&lock).unwrap();
-    assert!(collector.request("session_monitor_close", &json!({"source":"codex","sessionId":"tracked","roundId":"one"})).is_err());
+    assert!(collector
+        .request(
+            "session_monitor_close",
+            &json!({"source":"codex","sessionId":"tracked","roundId":"one"})
+        )
+        .is_err());
     assert!(collector.hub.sessions.contains_key("codex:tracked"));
     assert!(collector.live.contains_key("tracked"));
     std::fs::remove_dir(&lock).unwrap();
-    assert!(Collector::new(home.0.clone()).unwrap().hub.sessions.contains_key("codex:tracked"));
+    assert!(Collector::new(home.0.clone())
+        .unwrap()
+        .hub
+        .sessions
+        .contains_key("codex:tracked"));
 }
 
 #[test]
@@ -903,9 +1231,21 @@ fn codex_monitor_close_forgets_legacy_memory_without_a_recovery_record() {
     assert!(collector.ingest_hook(&json!({"session_id":"tracked","turn_id":"one","hook_event_name":"UserPromptSubmit","timestamp":timestamp})));
     let store = home.0.join(".agent-studio/codex-recovery-v1.json");
     std::fs::remove_file(&store).unwrap();
-    assert_eq!(collector.request("session_monitor_close", &json!({"source":"codex","sessionId":"tracked","roundId":"one"})).unwrap(), json!({"closed":true}));
+    assert_eq!(
+        collector
+            .request(
+                "session_monitor_close",
+                &json!({"source":"codex","sessionId":"tracked","roundId":"one"})
+            )
+            .unwrap(),
+        json!({"closed":true})
+    );
     assert!(!collector.hub.sessions.contains_key("codex:tracked"));
-    assert!(!Collector::new(home.0.clone()).unwrap().hub.sessions.contains_key("codex:tracked"));
+    assert!(!Collector::new(home.0.clone())
+        .unwrap()
+        .hub
+        .sessions
+        .contains_key("codex:tracked"));
 }
 
 #[test]
@@ -923,17 +1263,40 @@ fn codex_recovery_respects_policy_path_age_and_corruption() {
     assert!(agent_studio_core::codex_recovery::record_offline_terminal(&home.0, &json!({"session_id":"tracked","turn_id":"one","hook_event_name":"Stop","timestamp":timestamp+1})).is_ok_and(|accepted| !accepted));
     settings["sources"]["codex"]["enabled"] = json!(false);
     atomic_json(&home.0.join(".agent-studio/settings.json"), &settings).unwrap();
-    assert!(Collector::new(home.0.clone()).unwrap().hub.sessions.is_empty());
-    assert!(agent_studio_core::codex_recovery::record_offline_terminal(&home.0, &json!({"session_id":"tracked","hook_event_name":"Stop"})).is_err());
+    assert!(Collector::new(home.0.clone())
+        .unwrap()
+        .hub
+        .sessions
+        .is_empty());
+    assert!(agent_studio_core::codex_recovery::record_offline_terminal(
+        &home.0,
+        &json!({"session_id":"tracked","hook_event_name":"Stop"})
+    )
+    .is_err());
     settings["sources"]["codex"] = json!({"enabled":true,"path":""});
     atomic_json(&home.0.join(".agent-studio/settings.json"), &settings).unwrap();
     let file = home.0.join(".agent-studio/codex-recovery-v1.json");
     std::fs::write(&file, "broken").unwrap();
-    assert!(Collector::new(home.0.clone()).unwrap().hub.sessions.is_empty());
+    assert!(Collector::new(home.0.clone())
+        .unwrap()
+        .hub
+        .sessions
+        .is_empty());
     atomic_json(&file, &json!({"version":1,"path":"","sessions":{"tracked":{"session":{"id":"codex:tracked","source":"codex","sessionId":"tracked","roundId":"one","status":"running","updatedAt":timestamp},"live":{"roundId":"one","ended":false}}}})).unwrap();
-    assert!(Collector::new(home.0.clone()).unwrap().hub.sessions.is_empty(), "a recent but incomplete record is discarded");
+    assert!(
+        Collector::new(home.0.clone())
+            .unwrap()
+            .hub
+            .sessions
+            .is_empty(),
+        "a recent but incomplete record is discarded"
+    );
     atomic_json(&file, &json!({"version":1,"path":"","sessions":{"tracked":{"session":{"id":"codex:tracked","source":"codex","sessionId":"tracked","roundId":"one","status":"done","updatedAt":timestamp-3_600_001,"endedAt":timestamp-3_600_001},"live":{"roundId":"one","ended":true}}}})).unwrap();
-    assert!(Collector::new(home.0.clone()).unwrap().hub.sessions.is_empty());
+    assert!(Collector::new(home.0.clone())
+        .unwrap()
+        .hub
+        .sessions
+        .is_empty());
 }
 
 #[test]
@@ -945,36 +1308,58 @@ fn uninstalling_codex_clears_recovery_and_visible_sessions() {
     collector.set_integration_automatic("codex", false).unwrap();
     assert!(collector.hub.sessions.is_empty());
     assert!(!home.0.join(".agent-studio/codex-recovery-v1.json").exists());
-    assert!(Collector::new(home.0.clone()).unwrap().hub.sessions.is_empty());
+    assert!(Collector::new(home.0.clone())
+        .unwrap()
+        .hub
+        .sessions
+        .is_empty());
 }
 
 #[test]
 fn permission_checks_do_not_generate_wait_notifications() {
-    let home=Home::new();let mut c=home.collector("codex");
-    for (event,tool,id) in [("UserPromptSubmit","",""),("PermissionRequest","Bash","a")] {
+    let home = Home::new();
+    let mut c = home.collector("codex");
+    for (event, tool, id) in [
+        ("UserPromptSubmit", "", ""),
+        ("PermissionRequest", "Bash", "a"),
+    ] {
         c.ingest_hook(&json!({"session_id":"x","turn_id":"r","hook_event_name":event,"tool_name":tool,"tool_use_id":id}));
     }
-    assert_eq!(c.hub.sessions["codex:x"]["status"],"running");
-    assert_eq!(c.hub.sessions["codex:x"]["permissionChecks"].as_array().unwrap().len(),1);
-    assert_eq!(c.hub.sessions["codex:x"]["permissionChecks"][0]["id"],"perm:a");
+    assert_eq!(c.hub.sessions["codex:x"]["status"], "running");
+    assert_eq!(
+        c.hub.sessions["codex:x"]["permissionChecks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        c.hub.sessions["codex:x"]["permissionChecks"][0]["id"],
+        "perm:a"
+    );
     assert!(c.hub.sessions["codex:x"]["permissionChecks"][0]["ts"].is_number());
     assert!(c.hub.snapshot()["events"].as_array().unwrap().is_empty());
     c.ingest_hook(&json!({"session_id":"x","turn_id":"r","hook_event_name":"PreToolUse","tool_name":"request_user_input","tool_use_id":"q"}));
     c.ingest_hook(&json!({"session_id":"x","turn_id":"r","hook_event_name":"PostToolUse","tool_name":"Bash","tool_use_id":"a"}));
-    assert_eq!(c.hub.sessions["codex:x"]["status"],"wait");
-    assert_eq!(c.hub.sessions["codex:x"]["permissionChecks"],json!([]));
-    assert_eq!(c.hub.snapshot()["events"].as_array().unwrap().len(),1);
+    assert_eq!(c.hub.sessions["codex:x"]["status"], "wait");
+    assert_eq!(c.hub.sessions["codex:x"]["permissionChecks"], json!([]));
+    assert_eq!(c.hub.snapshot()["events"].as_array().unwrap().len(), 1);
 }
 
 #[test]
 fn internal_codex_tasks_never_reappear_on_late_hooks() {
     let home = Home::new();
     let mut c = home.collector("codex");
-    let prompts: Vec<String> = serde_json::from_str(include_str!("../../../src/monitor/codex-internal-prompts.json")).unwrap();
+    let prompts: Vec<String> = serde_json::from_str(include_str!(
+        "../../../src/monitor/codex-internal-prompts.json"
+    ))
+    .unwrap();
     for (i, prompt) in prompts.iter().enumerate() {
         let id = format!("internal-{i}");
         c.ingest_hook(&json!({"session_id":id,"hook_event_name":"SessionStart"}));
-        assert!(!c.ingest_hook(&json!({"session_id":id,"hook_event_name":"UserPromptSubmit","prompt":prompt})));
+        assert!(!c.ingest_hook(
+            &json!({"session_id":id,"hook_event_name":"UserPromptSubmit","prompt":prompt})
+        ));
         for event in ["PreToolUse", "PostToolUse", "Stop", "SessionStart"] {
             assert!(!c.ingest_hook(&json!({"session_id":id,"hook_event_name":event})));
         }
@@ -1001,7 +1386,9 @@ fn host_exit_marks_unfinished_sessions_aborted_and_recovers() {
         2,
         Box::new(|| Ok("/sbin/launchd\n".into())),
     );
-    c.presence_mut("workbuddy", "workbuddy").unwrap().note_hook();
+    c.presence_mut("workbuddy", "workbuddy")
+        .unwrap()
+        .note_hook();
     c.poll_workbuddy().unwrap();
     assert_eq!(c.hub.sessions["workbuddy:s1"]["status"], json!("running"));
     c.poll_workbuddy().unwrap();
@@ -1074,9 +1461,18 @@ fn ide_host_kinds_are_probed_and_ended_independently() {
         c.presence_mut("codebuddy-ide", "vscode").unwrap().observe(),
         Presence::Alive
     );
-    assert_eq!(c.hub.sessions["codebuddy-ide:ide"]["status"], json!("aborted"));
-    assert_eq!(c.hub.sessions["codebuddy-ide:ide"]["endedBy"], json!("host"));
-    assert_eq!(c.hub.sessions["codebuddy-ide:code"]["status"], json!("running"));
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:ide"]["status"],
+        json!("aborted")
+    );
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:ide"]["endedBy"],
+        json!("host")
+    );
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:code"]["status"],
+        json!("running")
+    );
     assert!(c.hub.sessions["codebuddy-ide:code"]["endedBy"].is_null());
     // A live kind keeps the source connected even while its sibling exited.
     assert_eq!(c.hub.sources["codebuddy-ide"]["state"], json!("ok"));
@@ -1096,10 +1492,15 @@ fn ide_exit_names_only_the_exited_kind() {
         ide_presence("codebuddy-ide", PS_NO_HOST);
     // The VS Code kind never saw a hook: it must stay unknown and unmentioned.
     *c.presence_mut("codebuddy-ide", "vscode").unwrap() = ide_presence("vscode", PS_NO_HOST);
-    c.presence_mut("codebuddy-ide", "codebuddy-ide").unwrap().note_hook();
+    c.presence_mut("codebuddy-ide", "codebuddy-ide")
+        .unwrap()
+        .note_hook();
     c.poll_ide().unwrap();
     c.poll_ide().unwrap();
-    assert_eq!(c.hub.sessions["codebuddy-ide:ide"]["status"], json!("aborted"));
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:ide"]["status"],
+        json!("aborted")
+    );
     assert_eq!(c.hub.sources["codebuddy-ide"]["state"], json!("exited"));
     assert_eq!(
         c.hub.sources["codebuddy-ide"]["detail"],
@@ -1120,10 +1521,15 @@ fn vscode_exit_names_only_the_exited_kind() {
     *c.presence_mut("codebuddy-ide", "vscode").unwrap() = ide_presence("vscode", PS_NO_HOST);
     *c.presence_mut("codebuddy-ide", "codebuddy-ide").unwrap() =
         ide_presence("codebuddy-ide", PS_NO_HOST);
-    c.presence_mut("codebuddy-ide", "vscode").unwrap().note_hook();
+    c.presence_mut("codebuddy-ide", "vscode")
+        .unwrap()
+        .note_hook();
     c.poll_ide().unwrap();
     c.poll_ide().unwrap();
-    assert_eq!(c.hub.sessions["codebuddy-ide:code"]["status"], json!("aborted"));
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:code"]["status"],
+        json!("aborted")
+    );
     assert_eq!(c.hub.sources["codebuddy-ide"]["state"], json!("exited"));
     assert_eq!(
         c.hub.sources["codebuddy-ide"]["detail"],
@@ -1153,9 +1559,18 @@ fn vscode_exit_ends_only_vscode_sessions() {
     }
     c.poll_ide().unwrap();
     c.poll_ide().unwrap();
-    assert_eq!(c.hub.sessions["codebuddy-ide:code"]["status"], json!("aborted"));
-    assert_eq!(c.hub.sessions["codebuddy-ide:code"]["endedBy"], json!("host"));
-    assert_eq!(c.hub.sessions["codebuddy-ide:ide"]["status"], json!("running"));
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:code"]["status"],
+        json!("aborted")
+    );
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:code"]["endedBy"],
+        json!("host")
+    );
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:ide"]["status"],
+        json!("running")
+    );
     assert!(c.hub.sessions["codebuddy-ide:ide"]["endedBy"].is_null());
     assert_eq!(c.hub.sources["codebuddy-ide"]["state"], json!("ok"));
 }
@@ -1174,8 +1589,14 @@ fn both_kinds_gone_reports_once_for_both() {
     }
     c.poll_ide().unwrap();
     c.poll_ide().unwrap();
-    assert_eq!(c.hub.sessions["codebuddy-ide:ide"]["status"], json!("aborted"));
-    assert_eq!(c.hub.sessions["codebuddy-ide:code"]["status"], json!("aborted"));
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:ide"]["status"],
+        json!("aborted")
+    );
+    assert_eq!(
+        c.hub.sessions["codebuddy-ide:code"]["status"],
+        json!("aborted")
+    );
     assert_eq!(c.hub.sources["codebuddy-ide"]["state"], json!("exited"));
     assert_eq!(
         c.hub.sources["codebuddy-ide"]["detail"],
@@ -1218,7 +1639,10 @@ fn codex_async_questions_wait_and_clear_by_reply_prompt_or_end() {
             "<send_user_message_question_reply>\n{}\n</send_user_message_question_reply>",
             json!([{"questionItemId":json!([tool, tool, 0]).to_string(),"answer":"甲"}]).to_string())})
     };
-    hook(&mut c, json!({"hook_event_name":"UserPromptSubmit","prompt":"Start"}));
+    hook(
+        &mut c,
+        json!({"hook_event_name":"UserPromptSubmit","prompt":"Start"}),
+    );
     // Async questions now notify like synchronous ones, and their own completion
     // must not clear them.
     for tool in [
@@ -1226,20 +1650,35 @@ fn codex_async_questions_wait_and_clear_by_reply_prompt_or_end() {
         "functions.request_user_input_async",
         "mcp__codex__request_user_input_async",
     ] {
-        hook(&mut c, json!({
-            "hook_event_name":"PreToolUse","tool_name":tool,"tool_use_id":tool,
-            "tool_input":{"questions":[{"title":"偏好","options":[{"label":"A","description":"甲"}]}]}
-        }));
+        hook(
+            &mut c,
+            json!({
+                "hook_event_name":"PreToolUse","tool_name":tool,"tool_use_id":tool,
+                "tool_input":{"questions":[{"title":"偏好","options":[{"label":"A","description":"甲"}]}]}
+            }),
+        );
         assert_eq!(c.hub.sessions["codex:x"]["status"], "wait");
-        let pending = c.hub.sessions["codex:x"]["pending"].as_array().unwrap().clone();
+        let pending = c.hub.sessions["codex:x"]["pending"]
+            .as_array()
+            .unwrap()
+            .clone();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0]["id"], tool);
         assert_eq!(pending[0]["optional"], json!(true));
         assert_eq!(pending[0]["text"], "偏好");
-        assert_eq!(pending[0]["questions"][0]["options"][0]["description"], "甲");
-        hook(&mut c, json!({"hook_event_name":"PostToolUse","tool_name":tool,"tool_use_id":tool}));
         assert_eq!(
-            c.hub.sessions["codex:x"]["pending"].as_array().unwrap().len(),
+            pending[0]["questions"][0]["options"][0]["description"],
+            "甲"
+        );
+        hook(
+            &mut c,
+            json!({"hook_event_name":"PostToolUse","tool_name":tool,"tool_use_id":tool}),
+        );
+        assert_eq!(
+            c.hub.sessions["codex:x"]["pending"]
+                .as_array()
+                .unwrap()
+                .len(),
             1
         );
         // The answer envelope clears exactly that call and never titles the session.
@@ -1250,33 +1689,72 @@ fn codex_async_questions_wait_and_clear_by_reply_prompt_or_end() {
     }
     // A synchronous question survives an async completion; only a real prompt
     // clears the unanswered async item, and only it is optional.
-    hook(&mut c, json!({"hook_event_name":"PreToolUse","tool_name":"functions.request_user_input","tool_use_id":"sync"}));
-    hook(&mut c, json!({"hook_event_name":"PreToolUse","tool_name":"functions.request_user_input_async","tool_use_id":"waiting"}));
-    hook(&mut c, json!({"hook_event_name":"PostToolUse","tool_name":"functions.request_user_input_async","tool_use_id":"waiting"}));
-    let pending = c.hub.sessions["codex:x"]["pending"].as_array().unwrap().clone();
+    hook(
+        &mut c,
+        json!({"hook_event_name":"PreToolUse","tool_name":"functions.request_user_input","tool_use_id":"sync"}),
+    );
+    hook(
+        &mut c,
+        json!({"hook_event_name":"PreToolUse","tool_name":"functions.request_user_input_async","tool_use_id":"waiting"}),
+    );
+    hook(
+        &mut c,
+        json!({"hook_event_name":"PostToolUse","tool_name":"functions.request_user_input_async","tool_use_id":"waiting"}),
+    );
+    let pending = c.hub.sessions["codex:x"]["pending"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert_eq!(pending.len(), 2);
     assert_eq!(pending[0]["id"], "sync");
     assert_eq!(pending[0]["optional"], json!(null));
     assert_eq!(pending[1]["id"], "waiting");
     assert_eq!(pending[1]["optional"], json!(true));
     // Another internal envelope is neither a title nor an answer.
-    hook(&mut c, json!({"hook_event_name":"UserPromptSubmit","prompt":"<in-app-browser-context url=\"x\">ctx</in-app-browser-context>"}));
+    hook(
+        &mut c,
+        json!({"hook_event_name":"UserPromptSubmit","prompt":"<in-app-browser-context url=\"x\">ctx</in-app-browser-context>"}),
+    );
     assert_eq!(
-        c.hub.sessions["codex:x"]["pending"].as_array().unwrap().len(),
+        c.hub.sessions["codex:x"]["pending"]
+            .as_array()
+            .unwrap()
+            .len(),
         2
     );
     assert_eq!(c.hub.sessions["codex:x"]["title"], "Start");
-    hook(&mut c, json!({"hook_event_name":"UserPromptSubmit","prompt":"Continue"}));
-    let pending = c.hub.sessions["codex:x"]["pending"].as_array().unwrap().clone();
+    hook(
+        &mut c,
+        json!({"hook_event_name":"UserPromptSubmit","prompt":"Continue"}),
+    );
+    let pending = c.hub.sessions["codex:x"]["pending"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0]["id"], "sync");
     assert_eq!(c.hub.sessions["codex:x"]["title"], "Continue");
     // Missing tool_input falls back to the generic wait copy.
-    hook(&mut c, json!({"hook_event_name":"PreToolUse","tool_name":"functions.request_user_input_async","tool_use_id":"bare"}));
-    assert_eq!(c.hub.sessions["codex:x"]["pending"][1]["text"], "等待用户输入");
+    hook(
+        &mut c,
+        json!({"hook_event_name":"PreToolUse","tool_name":"functions.request_user_input_async","tool_use_id":"bare"}),
+    );
+    assert_eq!(
+        c.hub.sessions["codex:x"]["pending"][1]["text"],
+        "等待用户输入"
+    );
     // An empty prompt is not a real message: it neither titles nor answers.
-    hook(&mut c, json!({"hook_event_name":"UserPromptSubmit","prompt":"   "}));
-    assert_eq!(c.hub.sessions["codex:x"]["pending"].as_array().unwrap().len(), 2);
+    hook(
+        &mut c,
+        json!({"hook_event_name":"UserPromptSubmit","prompt":"   "}),
+    );
+    assert_eq!(
+        c.hub.sessions["codex:x"]["pending"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
     assert_eq!(c.hub.sessions["codex:x"]["title"], "Continue");
     // One envelope can clear several call ids at once.
     hook(
@@ -1287,17 +1765,32 @@ fn codex_async_questions_wait_and_clear_by_reply_prompt_or_end() {
         {"questionItemId": json!(["functions.request_user_input_async","bare",0]).to_string(), "answer":"A"},
         {"questionItemId": json!(["functions.request_user_input_async","second",1]).to_string(), "answer":"B"}
     ]);
-    hook(&mut c, json!({"hook_event_name":"UserPromptSubmit","prompt":format!(
-        "<send_user_message_question_reply>\n{multi}\n</send_user_message_question_reply>"
-    )}));
-    let pending = c.hub.sessions["codex:x"]["pending"].as_array().unwrap().clone();
+    hook(
+        &mut c,
+        json!({"hook_event_name":"UserPromptSubmit","prompt":format!(
+            "<send_user_message_question_reply>\n{multi}\n</send_user_message_question_reply>"
+        )}),
+    );
+    let pending = c.hub.sessions["codex:x"]["pending"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0]["id"], "sync");
     // Evicting call bookkeeping must not keep an unanswered async wait.
-    hook(&mut c, json!({"hook_event_name":"PreToolUse","tool_name":"functions.request_user_input_async","tool_use_id":"gone"}));
+    hook(
+        &mut c,
+        json!({"hook_event_name":"PreToolUse","tool_name":"functions.request_user_input_async","tool_use_id":"gone"}),
+    );
     c.live.get_mut("x").unwrap()["calls"] = json!({});
-    hook(&mut c, json!({"hook_event_name":"UserPromptSubmit","prompt":"Still here"}));
-    let pending = c.hub.sessions["codex:x"]["pending"].as_array().unwrap().clone();
+    hook(
+        &mut c,
+        json!({"hook_event_name":"UserPromptSubmit","prompt":"Still here"}),
+    );
+    let pending = c.hub.sessions["codex:x"]["pending"]
+        .as_array()
+        .unwrap()
+        .clone();
     assert_eq!(pending.len(), 1);
     assert_eq!(pending[0]["id"], "sync");
     assert_eq!(c.hub.sessions["codex:x"]["title"], "Still here");
@@ -1330,7 +1823,10 @@ fn optional_waits_expire_lazily_without_clearing_synchronous_items() {
     assert_eq!(s["pending"][1]["id"], "sync");
     assert_eq!(s["pending"][1]["optional"], json!(null));
     // Expiry is decided on read, so the stored round still holds the old item.
-    assert_eq!(h.sessions["codex:x"]["pending"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        h.sessions["codex:x"]["pending"].as_array().unwrap().len(),
+        3
+    );
     let mut only = Hub::new();
     for ev in [
         json!({"type":"start","roundId":"r","ts":t}),
@@ -1344,7 +1840,13 @@ fn optional_waits_expire_lazily_without_clearing_synchronous_items() {
     let expired = only.snapshot()["sessions"][0].clone();
     assert_eq!(expired["status"], "running");
     assert_eq!(expired["pending"], json!([]));
-    assert_eq!(only.sessions["codex:y"]["pending"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        only.sessions["codex:y"]["pending"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 const OBSERVED_MEMORY_PROMPT: &str = "Consolidate the supplied rollout summaries into `memory_summary.md` so another agent understands the user, finds relevant prior work, and continues correctly.";
@@ -1353,14 +1855,34 @@ const OBSERVED_MEMORY_PROMPT: &str = "Consolidate the supplied rollout summaries
 fn observed_memory_prompt_is_suppressed_with_whitespace_and_late_hooks() {
     let home = Home::new();
     let mut c = home.collector("codex");
-    let prompt = format!("  {}\nAdditional summaries follow.", OBSERVED_MEMORY_PROMPT.replace(' ', "\n\t"));
-    assert!(!c.ingest_hook(&json!({"session_id":"memory","hook_event_name":"UserPromptSubmit","prompt":prompt})));
-    for event in ["PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "Interrupt", "SessionEnd", "SessionStart"] {
+    let prompt = format!(
+        "  {}\nAdditional summaries follow.",
+        OBSERVED_MEMORY_PROMPT.replace(' ', "\n\t")
+    );
+    assert!(!c.ingest_hook(
+        &json!({"session_id":"memory","hook_event_name":"UserPromptSubmit","prompt":prompt})
+    ));
+    for event in [
+        "PreToolUse",
+        "PostToolUse",
+        "PermissionRequest",
+        "Stop",
+        "Interrupt",
+        "SessionEnd",
+        "SessionStart",
+    ] {
         assert!(!c.ingest_hook(&json!({"session_id":"memory","hook_event_name":event,"tool_name":"request_user_input","tool_use_id":"late"})));
     }
     assert!(c.hub.sessions.is_empty());
     assert!(c.hub.snapshot()["events"].as_array().unwrap().is_empty());
-    for (i, prompt) in ["帮我整理 memory_summary.md".to_owned(), format!("Explain this: {OBSERVED_MEMORY_PROMPT}"), "Consolidate the supplied rollout summaries for my project".to_owned()].iter().enumerate() {
+    for (i, prompt) in [
+        "帮我整理 memory_summary.md".to_owned(),
+        format!("Explain this: {OBSERVED_MEMORY_PROMPT}"),
+        "Consolidate the supplied rollout summaries for my project".to_owned(),
+    ]
+    .iter()
+    .enumerate()
+    {
         assert!(c.ingest_hook(&json!({"session_id":format!("user-{i}"),"hook_event_name":"UserPromptSubmit","prompt":prompt})));
     }
     assert_eq!(c.hub.sessions.len(), 3);
@@ -1378,21 +1900,32 @@ fn legacy_memory_recovery_is_hidden_before_late_hooks() {
         c.ingest_hook(&json!({"session_id":sid,"turn_id":"one","hook_event_name":"Stop","timestamp":timestamp+1}));
     }
     let store = home.0.join(".agent-studio/codex-recovery-v1.json");
-    let mut data: serde_json::Value = serde_json::from_slice(&std::fs::read(&store).unwrap()).unwrap();
+    let mut data: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&store).unwrap()).unwrap();
     data["sessions"]["memory"]["session"]["title"] = json!(OBSERVED_MEMORY_PROMPT);
-    data["sessions"]["user"]["session"]["title"] = json!(format!("Explain this: {OBSERVED_MEMORY_PROMPT}"));
+    data["sessions"]["user"]["session"]["title"] =
+        json!(format!("Explain this: {OBSERVED_MEMORY_PROMPT}"));
     atomic_json(&store, &data).unwrap();
     drop(c);
     let mut restored = Collector::new(home.0.clone()).unwrap();
     assert!(!restored.hub.sessions.contains_key("codex:memory"));
     assert!(restored.hub.sessions.contains_key("codex:user"));
     assert_eq!(restored.live["memory"]["internal"], true);
-    for event in ["PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "SessionStart"] {
+    for event in [
+        "PreToolUse",
+        "PostToolUse",
+        "PermissionRequest",
+        "Stop",
+        "SessionStart",
+    ] {
         assert!(!restored.ingest_hook(&json!({"session_id":"memory","hook_event_name":event,"tool_name":"request_user_input","tool_use_id":"late"})));
         assert!(!restored.hub.sessions.contains_key("codex:memory"));
     }
     assert_eq!(restored.hub.sessions.len(), 1);
-    assert!(restored.hub.snapshot()["events"].as_array().unwrap().is_empty());
+    assert!(restored.hub.snapshot()["events"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     drop(restored);
     let mut again = Collector::new(home.0.clone()).unwrap();
     assert!(again.hub.sessions.contains_key("codex:user"));

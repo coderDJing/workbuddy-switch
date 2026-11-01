@@ -1694,7 +1694,7 @@ fn install_helper_locked() -> Result<Value, String> {
 /// - 关闭**不可回滚**：后续任一阶段失败时，错误里都会说明 CLI 已被关闭。
 pub fn switch_active_account(account_id: &str) -> Result<Value, String> {
     let guard = crate::modules::state_lock::try_auth().map_err(|e| e.to_string())?;
-    let result = switch_active_account_locked(account_id)?;
+    let result = switch_active_account_locked(account_id, &guard)?;
     crate::modules::state_lock::signal_auth_change(&guard);
     Ok(result)
 }
@@ -1717,7 +1717,7 @@ pub(crate) fn switch_for_rotation(
     {
         return Ok(None);
     }
-    let result = switch_active_account_locked(account_id)?;
+    let result = switch_active_account_locked(account_id, &guard)?;
     crate::modules::state_lock::signal_auth_change(&guard);
     Ok(Some(result))
 }
@@ -1726,7 +1726,10 @@ fn rotation_precondition(expected: Option<&str>, actual: Option<&str>, live_sess
     expected == actual && !live_session
 }
 
-fn switch_active_account_locked(account_id: &str) -> Result<Value, String> {
+fn switch_active_account_locked(
+    account_id: &str,
+    guard: &crate::modules::state_lock::StateLock,
+) -> Result<Value, String> {
     if cfg!(windows) {
         ensure_no_process_env_override()?;
     }
@@ -1807,6 +1810,9 @@ fn switch_active_account_locked(account_id: &str) -> Result<Value, String> {
             return Err(after_close_error(error, closed_count));
         }
     }
+
+    // CLI 默认账号已改写成功，最后使用记账失败只影响展示，不再回头报错。
+    let _ = account::mark_used_locked(&canonical_id, account::USED_CLIENT_CODEBUDDY_CLI, guard);
 
     let region_changed = previous_variant != Some(variant);
 

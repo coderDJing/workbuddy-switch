@@ -1,11 +1,13 @@
 pub mod adapters;
-pub mod codex_recovery;
 pub mod codex_read_state;
+pub mod codex_recovery;
 pub mod custom;
 pub mod host_process;
 pub mod hub;
+pub mod log_watch;
 pub mod settings;
 pub mod tail;
+pub mod workspace_history;
 use serde_json::{json, Value};
 pub fn now() -> i64 {
     std::time::SystemTime::now()
@@ -167,11 +169,16 @@ mod question_reply_ids_tests {
             {"questionItemId": serde_json::json!(["t","a",0]).to_string(), "answer":"A"},
             {"questionItemId": serde_json::json!(["t","b",1]).to_string(), "answer":"B"},
         ]);
-        assert_eq!(question_reply_ids(&envelope(&two.to_string())), vec!["a", "b"]);
+        assert_eq!(
+            question_reply_ids(&envelope(&two.to_string())),
+            vec!["a", "b"]
+        );
         assert!(question_reply_ids("hello").is_empty());
         assert!(question_reply_ids(&envelope("not json")).is_empty());
         assert!(question_reply_ids(&envelope("{}")).is_empty());
         assert!(question_reply_ids(&envelope(r#"[{"questionItemId":["t","x",0]}]"#)).is_empty());
-        assert!(question_reply_ids(&envelope(r#"[{"questionItemId":"[\"t\",\"\",0]"}]"#)).is_empty());
+        assert!(
+            question_reply_ids(&envelope(r#"[{"questionItemId":"[\"t\",\"\",0]"}]"#)).is_empty()
+        );
     }
 }

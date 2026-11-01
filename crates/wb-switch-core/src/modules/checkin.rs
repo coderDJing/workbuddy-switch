@@ -24,7 +24,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::hash::{Hash, Hasher};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -39,6 +39,7 @@ use crate::modules::refresh::{ensure_fresh_token, refresh_account_token};
 use crate::modules::variant::WbVariant;
 
 static CHECKIN_RUNNING: AtomicBool = AtomicBool::new(false);
+static CHECKIN_CURSOR: AtomicUsize = AtomicUsize::new(0);
 static CHECKIN_ACCOUNTS_RUNNING: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 /// 上一轮是否有账号提交/查询失败（进程内，不落盘）。
@@ -57,6 +58,34 @@ const FAST_RETRY_MAX: u32 = 12;
 
 /// 窗口模式下两轮之间的最小间隔（到点即办）。
 const MIN_CYCLE_DELAY: Duration = Duration::from_secs(60);
+
+/// 未显式配置签到时间段时使用的默认分散窗口（本地时区，`[start, end)`）。
+///
+/// 历史行为是「空串 = 不限制时段」，于是所有账号会在宿主启动的那一刻被连续签完
+/// （实测 34 个账号 61 秒内完成，平均间隔 1.8 秒）。这种密集请求与人工使用特征
+/// 差异极大。改为默认窗口后，账号会按 (本地日期, 账号) 哈希分散到窗口内的某一
+/// 分钟，天然错峰；用户仍可把窗口设成 `00:00`~`23:59` 恢复「不限时段」。
+const DEFAULT_CHECKIN_WINDOW: (u32, u32) = (8 * 60, 22 * 60);
+
+/// 单轮最多提交的账号数（防御性上限）。
+///
+/// 窗口被配置得很窄、或大量账号的当日目标时刻已经过去（例如 23:00 才启动宿主）
+/// 时，单轮 `due` 集合可能很大。这里截断，其余账号留到下一轮，避免又在几十秒内
+/// 打完一批；被截断的数量写入返回值的 `deferred` 字段，便于用户发现并放宽窗口。
+const MAX_CHECKIN_PER_CYCLE: usize = 8;
+
+/// 同一轮内相邻账号之间的基础间隔，进一步拉开连续请求的节奏。
+const CHECKIN_STAGGER: Duration = Duration::from_millis(1800);
+
+fn cycle_batch(mut accounts: Vec<Value>, cursor: usize) -> (Vec<Value>, usize) {
+    let deferred = accounts.len().saturating_sub(MAX_CHECKIN_PER_CYCLE);
+    if !accounts.is_empty() {
+        let start = cursor % accounts.len();
+        accounts.rotate_left(start);
+        accounts.truncate(MAX_CHECKIN_PER_CYCLE);
+    }
+    (accounts, deferred)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CheckinCycleMode {
@@ -660,7 +689,7 @@ fn plan_next_delay(
 /// 宿主下一轮睡眠时长。策略全在 core，宿主只读这个时长，不解释 payload。
 pub fn next_cycle_delay() -> Duration {
     let cfg = load_checkin_config();
-    let window = window_minutes(&cfg);
+    let window = Some(window_minutes(&cfg).unwrap_or(DEFAULT_CHECKIN_WINDOW));
     // 窗口未生效时不必读账号库/日志：直接走既有 30 分钟节奏。
     let accounts = if window.is_some() {
         auto_checkin_accounts(load_accounts(), &cfg)
@@ -705,9 +734,9 @@ fn write_window_receipt(win: (u32, u32), account: &Value) {
 /// 只遍历支持签到且允许自动签到的账号。并发锁防止与
 /// 手动签到/上一轮重复运行。
 ///
-/// 时间段生效时只处理「到点未办」的账号：未到点整轮不发任何请求，返回
+/// 每轮只处理「到点未办」的账号：未到点整轮不发任何请求，返回
 /// `{"status":"skipped","reason":"before_checkin_time","accounts":[]}`。
-/// 时间段未生效时，每轮处理全部允许自动签到的账号。
+/// 未配置时间段时使用 `DEFAULT_CHECKIN_WINDOW` 分散，而不是「不限时段全量签」。
 pub async fn run_checkin_cycle(_mode: CheckinCycleMode) -> Value {
     let Some(_guard) = RunFlagGuard::try_acquire(&CHECKIN_RUNNING) else {
         return json!({"status": "skipped", "reason": "already_running"});
@@ -720,20 +749,40 @@ pub async fn run_checkin_cycle(_mode: CheckinCycleMode) -> Value {
     if accounts.is_empty() {
         return json!({"status": "no_accounts"});
     }
-    let window = window_minutes(&cfg);
-    // 窗口未生效时，不再按时间过滤允许自动签到的账号。
-    let accounts = match window {
-        Some(win) => due_accounts(accounts, now_ms(), Some(win), &load_checkin_logs()),
-        None => accounts,
-    };
+    // 未显式配置时间段时退化为默认分散窗口：避免「一启动就把全部账号打完」。
+    // 用户仍可把窗口设成 00:00~23:59 来把分散签到目标覆盖到全天。
+    let window = Some(window_minutes(&cfg).unwrap_or(DEFAULT_CHECKIN_WINDOW));
+    let logs = load_checkin_logs();
+    let mut accounts = due_accounts(accounts, now_ms(), window, &logs);
+    // Least recently attempted accounts go first, so failing early accounts
+    // cannot permanently occupy every limited batch.
+    accounts.sort_by_key(|account| {
+        logs.iter()
+            .filter(|row| row["accountId"] == account["id"])
+            .filter_map(|row| row["ts"].as_i64())
+            .max()
+            .unwrap_or(0)
+    });
     if accounts.is_empty() {
-        // 只有时间段生效时才可能为空：整轮没有任何账号到点，不发任何请求。
+        // 整轮没有任何账号到点，不发任何请求。
         record_cycle_health(false);
         return json!({"status": "skipped", "reason": "before_checkin_time", "accounts": []});
     }
+    // 单轮限流：超出上限的账号留到下一轮，避免瞬间打出一大批请求。
+    // Authentication failures may return before a sign-in log is written.
+    // Round-robin rotation still gives later accounts a chance in that case.
+    let cursor = CHECKIN_CURSOR.fetch_add(MAX_CHECKIN_PER_CYCLE, Ordering::Relaxed);
+    let (accounts, deferred) = cycle_batch(accounts, cursor);
     let mut summary = json!({"status": "ok", "accounts": []});
+    if deferred > 0 {
+        summary["deferred"] = json!(deferred);
+    }
     let mut had_errors = false;
-    for acc in accounts {
+    for (idx, acc) in accounts.into_iter().enumerate() {
+        // 相邻账号之间拉开间隔，进一步降低连续请求的密度。
+        if idx > 0 {
+            tokio::time::sleep(CHECKIN_STAGGER).await;
+        }
         let result = checkin_account(&acc).await;
         let outcome = result.get("result").and_then(Value::as_str);
         if outcome == Some("error") {
@@ -899,6 +948,20 @@ async fn checkin_all_rows(accounts: Vec<Value>, cfg: &Value) -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn failed_accounts_without_logs_do_not_starve_the_next_batch() {
+        let accounts: Vec<_> = (0..9)
+            .map(|i| serde_json::json!({"id":i.to_string()}))
+            .collect();
+        let (first, deferred) = super::cycle_batch(accounts.clone(), 0);
+        assert_eq!(first.len(), 8);
+        assert_eq!(deferred, 1);
+        assert!(!first.iter().any(|a| a["id"] == "8"));
+        let (next, _) = super::cycle_batch(accounts, 8);
+        assert_eq!(next[0]["id"], "8");
+        assert!(super::cycle_batch(Vec::new(), 8).0.is_empty());
+    }
+
     use super::*;
 
     #[tokio::test]

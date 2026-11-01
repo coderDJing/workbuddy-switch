@@ -28,6 +28,13 @@ export interface AccountMeta {
   refreshExpiresAt: number | null;
   refreshedAt: number | null;
   createdAt: number | null;
+  /**
+   * 最近一次被切为某端当前账号的时间（毫秒）。
+   * 缺省 / null 表示从未通过本应用切换过（旧后端与历史账号同样按此处理）。
+   */
+  lastUsedAt?: number | null;
+  /** 「最后使用」的来源端标识：workbuddy / codebuddyCli / codebuddyIde / vscodeExt / jetbrains。 */
+  lastUsedClient?: string | null;
   needsRelogin: boolean;
   needsReloginReason: string | null;
   /** 账号所属档位；缺省（旧后端/历史账号）按国内版处理。 */
@@ -148,6 +155,21 @@ export interface LinkedCopyResult {
   groupId: string;
 }
 
+/**
+ * 置顶状态同步结果（复制 / 同步报告共用）。
+ *
+ * 置顶记录不在 SQLite，而在各账号自己的
+ * `storage/user-<uid>-personal/global/conversations.json`；跨账号复制会换 sessionId，
+ * 因此按关联映射把来源账号的置顶条目单向追加到目标账号。
+ * `skippedReason` 只在没能同步时出现——置顶同步失败不影响复制/同步本身的成败。
+ */
+export interface SessionPinnedSyncInfo {
+  /** 本次追加到目标账号的置顶条目数（已同步过则为 0）。 */
+  added: number;
+  /** 未能同步的原因；成功或无事可做时不出现。 */
+  skippedReason?: string;
+}
+
 /** 切换时的会话复制报告；复制失败时后端只回 `error`（切换本身仍继续）。 */
 export interface SessionCopyReport {
   sourceUid?: string;
@@ -160,6 +182,8 @@ export interface SessionCopyReport {
   errors?: { id: string; error: string }[];
   /** 仍有未完成的会话写入时为 true（失败项可重试，不会产生第二个副本）。 */
   needsRecovery?: boolean;
+  /** 置顶状态同步结果（附属信息，失败只体现在 `skippedReason`）。 */
+  pinned?: SessionPinnedSyncInfo;
   /** 临时备份残留（待清理/待恢复）；无异常时为空数组。 */
   temporaryFiles?: TemporaryFileInfo[];
   error?: string;
@@ -283,6 +307,8 @@ export interface SessionSyncReport {
   errors: { groupId?: string; error: string }[];
   /** 仍有未完成/无法安全恢复的会话写入时为 true。 */
   needsRecovery?: boolean;
+  /** 置顶状态同步结果（附属信息，失败只体现在 `skippedReason`）。 */
+  pinned?: SessionPinnedSyncInfo;
   /** 临时备份残留（待清理/待恢复）；无异常时为空数组。 */
   temporaryFiles?: TemporaryFileInfo[];
 }
@@ -744,10 +770,19 @@ export interface CreditStatistics {
 
 export interface TokenStatsTotals { total: number; input: number; output: number; cacheRead: number; cacheWrite: number; uncachedInput: number; records: number; cacheHitRate: number | null; }
 export interface TokenStatsGroup extends TokenStatsTotals { key: string; title?: string | null; project?: string; sessionId?: string; }
+/** Full-history account aggregates, computed before the bounded request-detail window. */
+export interface TokenStatsAccount {
+  /** null represents usage with no reliable account attribution. */
+  accountId: string | null;
+  accountName: string;
+  summary: TokenStatsTotals;
+  daily: TokenStatsGroup[];
+  dailyByModel: Record<string, TokenStatsGroup[]>;
+}
 /** 一次模型调用的明细行；`total = input + output + cacheWrite`，`uncachedInput = max(0, input - cacheRead)`，`thinking` 是 `output` 中思考过程的 token 数（回复内容 = max(0, output - thinking)），均与聚合口径一致。 */
 export interface TokenStatsRequestRow { timestamp: number; model: string; project: string; sessionId: string; title?: string | null; input: number; output: number; cacheRead: number; cacheWrite: number; uncachedInput: number; thinking: number; total: number; }
 /** `workbuddy-ai` 为国际版本地数据源，与国内版分开统计，数据源缺失时为空集。 */
-export interface TokenStatsSource { source: "workbuddy" | "workbuddy-ai" | "codebuddy-cli" | "codebuddy-ide"; summary: TokenStatsTotals; models: TokenStatsGroup[]; projects: TokenStatsGroup[]; sessions: TokenStatsGroup[]; daily: TokenStatsGroup[]; /** Optional model-specific daily series for trend filtering. */ dailyByModel?: Record<string, TokenStatsGroup[]>; /** 仅 CodeBuddy CLI 来源返回的最近请求明细；旧后端或缺失时按空数组处理。 */ requests?: TokenStatsRequestRow[]; hours: TokenStatsGroup[]; filesScanned: number; parseErrors: number; coverageStartAt?: number | null; coverageEndAt?: number | null; }
+export interface TokenStatsSource { /** Absent on older backends. */ accounts?: TokenStatsAccount[]; source: "workbuddy" | "workbuddy-ai" | "codebuddy-cli" | "codebuddy-ide"; summary: TokenStatsTotals; models: TokenStatsGroup[]; projects: TokenStatsGroup[]; sessions: TokenStatsGroup[]; daily: TokenStatsGroup[]; /** Optional model-specific daily series for trend filtering. */ dailyByModel?: Record<string, TokenStatsGroup[]>; /** 仅 CodeBuddy CLI 来源返回的最近请求明细；旧后端或缺失时按空数组处理。 */ requests?: TokenStatsRequestRow[]; hours: TokenStatsGroup[]; filesScanned: number; parseErrors: number; coverageStartAt?: number | null; coverageEndAt?: number | null; }
 export interface TokenStatistics { generatedAt: number; rangeDays?: number | null; sources: TokenStatsSource[]; }
 
 export interface CodeBuddyCliStatus {
@@ -812,6 +847,56 @@ export interface GithubConfig {
   owner?: string;
   repo?: string;
   proxy?: string;
+}
+
+/** WebDAV 备份 / 跨设备同步配置（脱敏视图：口令不回显，只带是否已设置标记）。 */
+export interface WebdavConfig {
+  url: string;
+  username: string;
+  remotePath: string;
+  /** 是否已保存 WebDAV 服务器口令（明文不返回前端）。 */
+  hasPassword: boolean;
+}
+
+/** 保存 WebDAV 配置时的提交体：`password` 为空表示沿用已存口令。 */
+export type WebdavConfigInput = Omit<WebdavConfig, "hasPassword"> & { password?: string };
+
+/** 云端备份元信息（拉取明文头即可得，无需加密密码）。 */
+export interface WebdavRemoteInfo {
+  exists: boolean;
+  remote: { dirUrl: string; fileUrl: string };
+  updatedAt?: number;
+  deviceName?: string;
+  appVersion?: string;
+  accountCount?: number;
+}
+
+/** 备份 / 同步结果。 */
+export interface WebdavActionResult {
+  ok: boolean;
+  count: number;
+  updatedAt: number;
+}
+
+/** 恢复结果（合并计数 + 远端信息）。 */
+export interface WebdavRestoreResult {
+  ok: boolean;
+  imported: number;
+  skipped: number;
+  overwritten: number;
+  /** 是否同时写回了备份里的功能配置。 */
+  restoredConfigs?: boolean;
+  remote: { dirUrl: string; fileUrl: string };
+}
+
+/** 恢复预览：脱敏账号列表（含文件内索引）+ 远端信息。 */
+export interface WebdavRestorePreview {
+  snapshotId: string;
+  accounts: ImportPreviewAccount[];
+  total: number;
+  /** 备份是否携带功能配置快照（可选同时恢复）。 */
+  hasConfigs?: boolean;
+  remote: { dirUrl: string; fileUrl: string };
 }
 
 export interface UpdateInfo {
@@ -929,9 +1014,9 @@ export interface VscodeExtSwitchResult {
   sessionSync?: VscodeSessionSyncReport;
 }
 
-/** JetBrains IDE 的一条配置目录状态（IDEA / PyCharm 各自独立）。 */
+/** JetBrains / Android Studio 的一条配置目录状态（各产品独立）。 */
 export interface JetbrainsTargetStatus {
-  /** 配置目录名（如 "PyCharm2026.2"）。 */
+  /** 配置目录名（如 "PyCharm2026.2"、"GoLand2025.2"、"AndroidStudio2024.1"）。 */
   configDir: string;
   /** 是否安装了 CodeBuddy 插件（plugins/coding-copilot* 目录存在）。 */
   pluginInstalled: boolean;
@@ -942,7 +1027,7 @@ export interface JetbrainsTargetStatus {
 }
 
 export interface JetbrainsStatus {
-  /** 是否存在任一受支持的 JetBrains 配置目录。 */
+  /** 是否存在任一受支持的 JetBrains / Android Studio 配置目录。 */
   installed: boolean;
   /** 是否至少一个配置目录安装了 CodeBuddy 插件。 */
   pluginInstalled: boolean;
@@ -950,7 +1035,8 @@ export interface JetbrainsStatus {
   running: boolean;
   /** 是否任一装了插件的目标存在登录态。 */
   loggedIn: boolean;
-  configRoot: string | null;
+  /** 配置根目录列表：JetBrains 根 + Android Studio 的 Google 根。 */
+  configRoots: string[];
   targets: JetbrainsTargetStatus[];
   activeAccountId: string | null;
   activeAccountName: string | null;

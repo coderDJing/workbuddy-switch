@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+#[cfg(target_os = "macos")]
 const VSCODE_APP: &str = "Visual Studio Code.app";
 const VSCODE_BUNDLE: &str = "com.microsoft.VSCode";
 
@@ -11,7 +12,10 @@ enum SessionTarget {
     /// A CodeBuddy VS Code plugin session. The plugin has no URI handler, so the
     /// only addressable thing is the window's folder, which is resolved from the
     /// plugin's own history; `cwd` is a candidate, never the answer by itself.
-    VSCode { session: String, cwd: Option<PathBuf> },
+    VSCode {
+        session: String,
+        cwd: Option<PathBuf>,
+    },
 }
 fn codebuddy_international(edition: Option<&str>) -> bool {
     !matches!(edition, Some("domestic" | "codebuddycn"))
@@ -23,6 +27,7 @@ fn codebuddy_bundle(edition: Option<&str>) -> &'static str {
         "com.tencent.codebuddycn"
     }
 }
+#[cfg(any(target_os = "macos", test))]
 fn app_for_scheme(scheme: &str) -> Option<(&'static str, &'static str)> {
     Some(match scheme {
         "workbuddy-ai" => ("WorkBuddy AI.app", "com.workbuddy.workbuddy-ai"),
@@ -47,7 +52,11 @@ fn session_target(url: &str) -> Result<SessionTarget, String> {
     if url.starts_with("/api/open-session?") {
         let parsed =
             url::Url::parse(&format!("http://localhost{url}")).map_err(|e| e.to_string())?;
-        let sources: Vec<_> = parsed.query_pairs().filter(|(key, _)| key == "source").map(|(_, value)| value.into_owned()).collect();
+        let sources: Vec<_> = parsed
+            .query_pairs()
+            .filter(|(key, _)| key == "source")
+            .map(|(_, value)| value.into_owned())
+            .collect();
         let edition = parsed
             .query_pairs()
             .find(|(key, _)| key == "edition")
@@ -72,12 +81,21 @@ fn session_target(url: &str) -> Result<SessionTarget, String> {
                 if host.as_deref() != Some("vscode") {
                     return Ok(SessionTarget::App(codebuddy_bundle(edition.as_deref())));
                 }
-                Ok(match session.as_deref().map(str::trim).filter(|id| usable_session_id(id)) {
-                    Some(session) => SessionTarget::VSCode { session: session.to_string(), cwd },
-                    // Without a session id there is nothing to resolve a folder
-                    // from, so only the application itself can be activated.
-                    None => SessionTarget::App(VSCODE_BUNDLE),
-                })
+                Ok(
+                    match session
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|id| usable_session_id(id))
+                    {
+                        Some(session) => SessionTarget::VSCode {
+                            session: session.to_string(),
+                            cwd,
+                        },
+                        // Without a session id there is nothing to resolve a folder
+                        // from, so only the application itself can be activated.
+                        None => SessionTarget::App(VSCODE_BUNDLE),
+                    },
+                )
             }
             _ => Err("不支持的应用".into()),
         };
@@ -143,6 +161,24 @@ fn vscode_history_roots() -> Vec<PathBuf> {
         .collect()
 }
 
+/// Where the VS Code family archives the plugin's conversations (Windows).
+/// `%APPDATA%\<产品>\User\globalStorage\...` 与 macOS 的 `Library/Application Support`
+/// 是同一个用户数据根目录，只是前缀不同。
+#[cfg(target_os = "windows")]
+fn vscode_history_roots() -> Vec<PathBuf> {
+    let Some(appdata) = std::env::var_os("APPDATA") else {
+        return Vec::new();
+    };
+    let base = PathBuf::from(appdata);
+    ["Code", "Code - Insiders", "VSCodium", "Cursor", "Windsurf"]
+        .into_iter()
+        .map(|name| {
+            base.join(name)
+                .join("User/globalStorage/tencent-cloud.coding-copilot/genie-history")
+        })
+        .collect()
+}
+
 /// The bucket whose `conversations/<session>` entry exists, or `None` when the
 /// session is not archived under this root. Read-only, and silent on any error.
 fn bucket_for_session(root: &Path, session: &str) -> Option<String> {
@@ -178,7 +214,13 @@ enum BucketFolder {
 fn sanitize_workspace_id(path: &str) -> String {
     base64_encode(path.as_bytes())
         .chars()
-        .map(|byte| if matches!(byte, '/' | '+' | '=') { '_' } else { byte })
+        .map(|byte| {
+            if matches!(byte, '/' | '+' | '=') {
+                '_'
+            } else {
+                byte
+            }
+        })
         .take(64)
         .collect()
 }
@@ -191,7 +233,9 @@ fn decode_bucket_folder(bucket: &str) -> BucketFolder {
         return BucketFolder::Unknown;
     }
     for candidate in bucket_candidates(bucket) {
-        let Ok(text) = std::str::from_utf8(&candidate) else { continue };
+        let Ok(text) = std::str::from_utf8(&candidate) else {
+            continue;
+        };
         // A guess that does not reproduce the bucket would name an unrelated
         // path, so it is never accepted — even when such a path exists.
         if !bucket_matches_folder(bucket, text) {
@@ -238,7 +282,9 @@ fn bucket_candidates(bucket: &str) -> Vec<Vec<u8>> {
         if bucket.len() <= trimmed {
             break;
         }
-        candidates.extend(base64_decode(&desanitize(&bucket[..bucket.len() - trimmed])));
+        candidates.extend(base64_decode(&desanitize(
+            &bucket[..bucket.len() - trimmed],
+        )));
     }
     for flip in 0..bucket.len() {
         if bucket.as_bytes()[flip] != b'_' {
@@ -260,13 +306,18 @@ fn bucket_candidates(bucket: &str) -> Vec<Vec<u8>> {
 /// `_` → `/`: the plugin flattened three base64 characters into one, and away
 /// from the padding only `/` can have been there.
 fn desanitize(text: &str) -> String {
-    text.chars().map(|byte| if byte == '_' { '/' } else { byte }).collect()
+    text.chars()
+        .map(|byte| if byte == '_' { '/' } else { byte })
+        .collect()
 }
 
 /// Standard base64 with optional `=` padding, nothing else. A non-canonical
 /// tail is rejected so a wrong interpretation cannot pass as data.
 fn base64_decode(text: &str) -> Option<Vec<u8>> {
-    let body = text.strip_suffix("==").or_else(|| text.strip_suffix('=')).unwrap_or(text);
+    let body = text
+        .strip_suffix("==")
+        .or_else(|| text.strip_suffix('='))
+        .unwrap_or(text);
     if body.contains('=') || body.len() % 4 == 1 {
         return None;
     }
@@ -307,8 +358,16 @@ fn base64_encode(bytes: &[u8]) -> String {
             | chunk.get(2).copied().unwrap_or(0) as u32;
         out.push(ALPHABET[(group >> 18) as usize & 63] as char);
         out.push(ALPHABET[(group >> 12) as usize & 63] as char);
-        out.push(if chunk.len() > 1 { ALPHABET[(group >> 6) as usize & 63] as char } else { '=' });
-        out.push(if chunk.len() > 2 { ALPHABET[group as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(group >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[group as usize & 63] as char
+        } else {
+            '='
+        });
     }
     out
 }
@@ -325,23 +384,25 @@ fn resolve_vscode_folder(
         return None;
     }
     for root in history_roots {
-        let Some(bucket) = bucket_for_session(root, session) else { continue };
+        let Some(bucket) = bucket_for_session(root, session) else {
+            continue;
+        };
         return match decode_bucket_folder(&bucket) {
             BucketFolder::Folder(folder) => Some(folder),
             // The session ran in a window with no folder.
             BucketFolder::RootlessWindow => None,
             // The bucket says nothing on its own, but a `cwd` archived under the
             // same bucket is still that window's own folder.
-            BucketFolder::Unknown => {
-                cwd.filter(|path| usable_folder(path))
-                    .filter(|path| sanitize_workspace_id(&path.to_string_lossy()) == bucket)
-                    .map(Path::to_path_buf)
-            }
+            BucketFolder::Unknown => cwd
+                .filter(|path| usable_folder(path))
+                .filter(|path| sanitize_workspace_id(&path.to_string_lossy()) == bucket)
+                .map(Path::to_path_buf),
         };
     }
     // No bucket at all: the plugin is not installed here or changed its layout,
     // so the hook's own cwd is the only candidate left.
-    cwd.filter(|path| usable_folder(path)).map(Path::to_path_buf)
+    cwd.filter(|path| usable_folder(path))
+        .map(Path::to_path_buf)
 }
 
 /// The app bundle location when the app is installed, so `-a` can beat a
@@ -357,19 +418,39 @@ fn installed_app_path(app: &str) -> Option<PathBuf> {
     .find(|path| path.join("Contents/Info.plist").is_file())
 }
 
+/// 创建用于「打开 / 激活外部应用」的子命令。
+///
+/// 这些跳转会拉起 `powershell.exe`、`code.cmd`、`rundll32.exe` 等**控制台**程序；
+/// Windows 上不加 `CREATE_NO_WINDOW` 时每次都会闪一个 cmd 黑框（悬浮窗跳转时尤其扎眼）。
+/// macOS / Linux 没有这个标志，直接透传。
+fn spawn_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(program);
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command
+}
+
 /// Runs an open command and maps its failure to the message the UI shows.
 fn run_command(command: &mut Command) -> Result<(), String> {
-    let output = command.output().map_err(|e| format!("无法调用系统打开服务：{e}"))?;
+    let output = command
+        .output()
+        .map_err(|e| format!("无法调用系统打开服务：{e}"))?;
     if output.status.success() {
         return Ok(());
     }
     let detail = String::from_utf8_lossy(&output.stderr);
     eprintln!("Agent session open failed: {}", detail.trim());
-    Err(if detail.contains("-10814") || detail.contains("Unable to find application") {
-        "系统未找到应用或链接处理程序，请确认应用位置后重试".into()
-    } else {
-        "未能唤起目标 Agent，请打开应用后重试".into()
-    })
+    Err(
+        if detail.contains("-10814") || detail.contains("Unable to find application") {
+            "系统未找到应用或链接处理程序，请确认应用位置后重试".into()
+        } else {
+            "未能唤起目标 Agent，请打开应用后重试".into()
+        },
+    )
 }
 
 /// Opens a folder in VS Code, best target first. `open -a <app> <folder>` makes
@@ -380,22 +461,33 @@ fn run_command(command: &mut Command) -> Result<(), String> {
 #[cfg(target_os = "macos")]
 fn open_vscode_folder(folder: &Path) -> Result<(), String> {
     if let Some(app) = installed_app_path(VSCODE_APP) {
-        if run_command(Command::new("/usr/bin/open").arg("-a").arg(&app).arg(folder)).is_ok() {
+        if run_command(
+            spawn_command("/usr/bin/open")
+                .arg("-a")
+                .arg(&app)
+                .arg(folder),
+        )
+        .is_ok()
+        {
             return Ok(());
         }
         let cli = app.join("Contents/Resources/app/bin/code");
-        if cli.is_file() && run_command(Command::new(cli).arg(folder)).is_ok() {
+        if cli.is_file() && run_command(spawn_command(cli).arg(folder)).is_ok() {
             return Ok(());
         }
     }
-    run_command(Command::new("/usr/bin/open").args(["-b", VSCODE_BUNDLE]).arg(folder))
+    run_command(
+        spawn_command("/usr/bin/open")
+            .args(["-b", VSCODE_BUNDLE])
+            .arg(folder),
+    )
 }
 
 #[cfg(target_os = "macos")]
 fn open_session_target(target: SessionTarget) -> Result<(), String> {
     match target {
         SessionTarget::Link(target) => {
-            let mut command = Command::new("/usr/bin/open");
+            let mut command = spawn_command("/usr/bin/open");
             if let Some((app, bundle)) = app_for_scheme(target.scheme()) {
                 // URL scheme registration can be missing even while the app
                 // is installed/running. Deliver the deep link to the app itself.
@@ -409,23 +501,151 @@ fn open_session_target(target: SessionTarget) -> Result<(), String> {
             run_command(&mut command)
         }
         SessionTarget::App(bundle) => {
-            run_command(Command::new("/usr/bin/open").args(["-b", bundle]))
+            run_command(spawn_command("/usr/bin/open").args(["-b", bundle]))
         }
         SessionTarget::VSCode { session, cwd } => {
             match resolve_vscode_folder(&vscode_history_roots(), &session, cwd.as_deref()) {
                 Some(folder) => open_vscode_folder(&folder),
-                None => run_command(Command::new("/usr/bin/open").args(["-b", VSCODE_BUNDLE])),
+                None => run_command(spawn_command("/usr/bin/open").args(["-b", VSCODE_BUNDLE])),
             }
         }
     }
 }
 
+/// VS Code 系各产品在 Windows 上的进程名（Windows 没有 bundle id）。
+#[cfg(target_os = "windows")]
+const VSCODE_HOST_PROCESSES: [&str; 5] =
+    ["Code", "Code - Insiders", "VSCodium", "Cursor", "Windsurf"];
+
+/// macOS 的 bundle id → Windows 进程名。
+#[cfg(target_os = "windows")]
+fn windows_app_processes(bundle: &str) -> Vec<&'static str> {
+    match bundle {
+        "com.tencent.codebuddycn" => vec!["CodeBuddy CN"],
+        "com.tencent.codebuddy" => vec!["CodeBuddy"],
+        "com.microsoft.VSCode" => VSCODE_HOST_PROCESSES.to_vec(),
+        _ => Vec::new(),
+    }
+}
+
+/// 把已运行的应用窗口提到最前。Windows 没有等价的 `open -a`，只能自己找窗口；
+/// `WScript.Shell.AppActivate` 能同时处理还原与前台化。
+#[cfg(target_os = "windows")]
+fn activate_app(names: &[&str]) -> Result<(), String> {
+    let list = names
+        .iter()
+        .map(|name| format!("'{name}'"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let script = format!(
+        "$p = Get-Process -Name {list} -ErrorAction SilentlyContinue \
+         | Where-Object {{ $_.MainWindowHandle -ne 0 }} | Select-Object -First 1; \
+         if (-not $p) {{ exit 3 }}; \
+         (New-Object -ComObject WScript.Shell).AppActivate($p.Id) | Out-Null"
+    );
+    let mut command = spawn_command("powershell.exe");
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Hidden",
+        "-Command",
+        &script,
+    ]);
+    run_command(&mut command)
+}
+
+/// VS Code 家族的命令行入口：优先 PATH（用户自己配的安装），其次常见安装位置。
+#[cfg(target_os = "windows")]
+fn vscode_cli() -> Option<PathBuf> {
+    const NAMES: [&str; 5] = [
+        "code.cmd",
+        "code-insiders.cmd",
+        "codium.cmd",
+        "cursor.cmd",
+        "windsurf.cmd",
+    ];
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for name in NAMES {
+                let cli = dir.join(name);
+                if cli.is_file() {
+                    return Some(cli);
+                }
+            }
+        }
+    }
+    let mut dirs = Vec::new();
+    for var in ["LOCALAPPDATA", "PROGRAMFILES", "ProgramFiles(x86)"] {
+        let Some(base) = std::env::var_os(var) else {
+            continue;
+        };
+        let base = PathBuf::from(base);
+        for suffix in [
+            "Programs/Microsoft VS Code/bin",
+            "Microsoft VS Code/bin",
+            "Programs/VSCodium/bin",
+            "VSCodium/bin",
+            "Programs/cursor/resources/app/bin",
+            "Programs/Windsurf/bin",
+        ] {
+            dirs.push(base.join(suffix));
+        }
+    }
+    dirs.into_iter().find_map(|dir| {
+        NAMES
+            .iter()
+            .map(|name| dir.join(name))
+            .find(|cli| cli.is_file())
+    })
+}
+
+/// 在 VS Code 里打开（或聚焦已打开该目录的）窗口。
+///
+/// 用 CLI 的 `code <folder>` 而**不用** `-r/--reuse-window`：前者在目录已打开时
+/// 聚焦那个窗口、否则新开一个；后者会把当前窗口换成新目录，正是要避免的行为。
+#[cfg(target_os = "windows")]
+fn open_vscode_folder(folder: &Path) -> Result<(), String> {
+    let Some(cli) = vscode_cli() else {
+        return Err("未找到 VS Code 命令行（code.cmd），请确认已安装 VS Code".into());
+    };
+    if run_command(spawn_command(&cli).arg(folder)).is_ok() {
+        return Ok(());
+    }
+    // CLI 不可用时退回到主程序：VS Code 自己也会解析参数里的目录。
+    let exe = cli
+        .parent()
+        .and_then(Path::parent)
+        .map(|root| root.join("Code.exe"))
+        .filter(|exe| exe.is_file());
+    match exe {
+        Some(exe) => run_command(spawn_command(exe).arg(folder)),
+        None => Err("未能唤起 VS Code，请打开应用后重试".into()),
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn open_session_target(target: SessionTarget) -> Result<(), String> {
-    let SessionTarget::Link(target) = target else {
-        return Err("当前平台尚不支持仅唤起应用".into());
-    };
-    run_command(Command::new("rundll32.exe").args(["url.dll,FileProtocolHandler", target.as_str()]))
+    match target {
+        SessionTarget::Link(target) => run_command(
+            spawn_command("rundll32.exe").args(["url.dll,FileProtocolHandler", target.as_str()]),
+        ),
+        SessionTarget::App(bundle) => {
+            let names = windows_app_processes(bundle);
+            if names.is_empty() {
+                return Err("不支持的应用".into());
+            }
+            activate_app(&names)
+        }
+        // 插件没有 URI handler，唯一可寻址的是窗口所在的目录；目录解析不出来
+        // （没归档、或路径过长被桶名截断）时至少把 VS Code 窗口提到最前。
+        SessionTarget::VSCode { session, cwd } => {
+            match resolve_vscode_folder(&vscode_history_roots(), &session, cwd.as_deref()) {
+                Some(folder) => open_vscode_folder(&folder),
+                None => activate_app(&VSCODE_HOST_PROCESSES),
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -433,7 +653,7 @@ fn open_session_target(target: SessionTarget) -> Result<(), String> {
     let SessionTarget::Link(target) = target else {
         return Err("当前平台尚不支持仅唤起应用".into());
     };
-    run_command(Command::new("xdg-open").arg(target.as_str()))
+    run_command(spawn_command("xdg-open").arg(target.as_str()))
 }
 
 #[tauri::command]
@@ -455,15 +675,42 @@ mod tests {
     }
     #[test]
     fn codebuddy_missing_workspace_activates_app_without_opening_root() {
-        for value in ["/api/open-session?source=codebuddy-ide&edition=domestic", "codebuddycn://file/", "codebuddycn://file"] {
-            assert!(matches!(session_target(value).unwrap(), SessionTarget::App("com.tencent.codebuddycn")));
+        for value in [
+            "/api/open-session?source=codebuddy-ide&edition=domestic",
+            "codebuddycn://file/",
+            "codebuddycn://file",
+        ] {
+            assert!(matches!(
+                session_target(value).unwrap(),
+                SessionTarget::App("com.tencent.codebuddycn")
+            ));
         }
-        for value in ["/api/open-session?source=codebuddy-ide", "/api/open-session?source=codebuddy-ide&edition=international", "codebuddy://file/", "codebuddy://file"] {
-            assert!(matches!(session_target(value).unwrap(), SessionTarget::App("com.tencent.codebuddy")));
+        for value in [
+            "/api/open-session?source=codebuddy-ide",
+            "/api/open-session?source=codebuddy-ide&edition=international",
+            "codebuddy://file/",
+            "codebuddy://file",
+        ] {
+            assert!(matches!(
+                session_target(value).unwrap(),
+                SessionTarget::App("com.tencent.codebuddy")
+            ));
         }
-        assert_eq!(link("codebuddycn://file/Users/apple/project").path(), "/Users/apple/project");
-        assert_eq!(link("codebuddy://file/Users/apple/project").path(), "/Users/apple/project");
-        for value in ["codebuddycn://user@file/", "codebuddy://user@file/", "codebuddycn://other/path", "/api/open-session?source=other", "/api/open-session?source=codeg&source=codebuddy-ide"] {
+        assert_eq!(
+            link("codebuddycn://file/Users/apple/project").path(),
+            "/Users/apple/project"
+        );
+        assert_eq!(
+            link("codebuddy://file/Users/apple/project").path(),
+            "/Users/apple/project"
+        );
+        for value in [
+            "codebuddycn://user@file/",
+            "codebuddy://user@file/",
+            "codebuddycn://other/path",
+            "/api/open-session?source=other",
+            "/api/open-session?source=codeg&source=codebuddy-ide",
+        ] {
             assert!(session_target(value).is_err());
         }
     }
@@ -471,21 +718,32 @@ mod tests {
     fn vscode_plugin_sessions_open_their_folder_or_the_app() {
         // `host=vscode` with a session id hands the folder resolution to the
         // desktop side; the hook's cwd rides along as a candidate, not an answer.
-        match session_target("/api/open-session?source=codebuddy-ide&host=vscode&session=conv-1&cwd=%2Fwork%2Fapp").unwrap() {
+        match session_target(
+            "/api/open-session?source=codebuddy-ide&host=vscode&session=conv-1&cwd=%2Fwork%2Fapp",
+        )
+        .unwrap()
+        {
             SessionTarget::VSCode { session, cwd } => {
                 assert_eq!(session, "conv-1");
                 assert_eq!(cwd.as_deref(), Some(Path::new("/work/app")));
             }
             other => panic!("expected a VS Code target, got {other:?}"),
         }
-        assert!(matches!(session_target("/api/open-session?source=codebuddy-ide&host=vscode&session=conv-1").unwrap(), SessionTarget::VSCode { .. }));
+        assert!(matches!(
+            session_target("/api/open-session?source=codebuddy-ide&host=vscode&session=conv-1")
+                .unwrap(),
+            SessionTarget::VSCode { .. }
+        ));
         // Nothing to resolve a folder from: the application is the whole action.
         for value in [
             "/api/open-session?source=codebuddy-ide&host=vscode",
             "/api/open-session?source=codebuddy-ide&host=vscode&session=",
             "/api/open-session?source=codebuddy-ide&host=vscode&session=%2E%2E%2Fother",
         ] {
-            assert!(matches!(session_target(value).unwrap(), SessionTarget::App("com.microsoft.VSCode")));
+            assert!(matches!(
+                session_target(value).unwrap(),
+                SessionTarget::App("com.microsoft.VSCode")
+            ));
         }
         // `vscode://` is gone: the URL handler always uses the last active window.
         for value in [
@@ -500,14 +758,31 @@ mod tests {
             assert!(session_target(value).is_err());
         }
         // An unknown host value keeps the edition behaviour instead of guessing.
-        assert!(matches!(session_target("/api/open-session?source=codebuddy-ide&host=cursor").unwrap(), SessionTarget::App("com.tencent.codebuddy")));
+        assert!(matches!(
+            session_target("/api/open-session?source=codebuddy-ide&host=cursor").unwrap(),
+            SessionTarget::App("com.tencent.codebuddy")
+        ));
         for (value, app) in [
-            ("/api/open-session?source=codebuddy-ide&host=vscode&edition=domestic", "com.microsoft.VSCode"),
-            ("/api/open-session?source=codebuddy-ide&host=vscode", "com.microsoft.VSCode"),
-            ("/api/open-session?source=codebuddy-ide&host=cursor&edition=domestic", "com.tencent.codebuddycn"),
-            ("/api/open-session?source=codebuddy-ide&host=codebuddy-ide", "com.tencent.codebuddy"),
+            (
+                "/api/open-session?source=codebuddy-ide&host=vscode&edition=domestic",
+                "com.microsoft.VSCode",
+            ),
+            (
+                "/api/open-session?source=codebuddy-ide&host=vscode",
+                "com.microsoft.VSCode",
+            ),
+            (
+                "/api/open-session?source=codebuddy-ide&host=cursor&edition=domestic",
+                "com.tencent.codebuddycn",
+            ),
+            (
+                "/api/open-session?source=codebuddy-ide&host=codebuddy-ide",
+                "com.tencent.codebuddy",
+            ),
         ] {
-            assert!(matches!(session_target(value).unwrap(), SessionTarget::App(found) if found == app));
+            assert!(
+                matches!(session_target(value).unwrap(), SessionTarget::App(found) if found == app)
+            );
         }
         assert!(session_target("/api/open-session?source=codeg&host=vscode").is_ok());
     }
@@ -515,7 +790,13 @@ mod tests {
     /// cases below need the 48-byte base64 prefix of a long path to fall inside
     /// a name rather than on a temp-directory boundary. The caller removes it.
     fn scratch(name: &str) -> PathBuf {
-        let path = PathBuf::from("/tmp").join(format!("ast-{name}-{}", std::process::id()));
+        let base = if cfg!(windows) {
+            std::env::temp_dir().ancestors().last().unwrap().join("tmp")
+        } else {
+            PathBuf::from("/tmp")
+        };
+        let path = base.join(format!("ast-{name}-{}", std::process::id()));
+        assert!(path.is_absolute() && path.parent() == Some(base.as_path()));
         let _ = std::fs::remove_dir_all(&path);
         std::fs::create_dir_all(&path).unwrap();
         path
@@ -540,14 +821,22 @@ mod tests {
         assert!(raw.contains('/') && raw.ends_with('='));
         let bucket = sanitize_workspace_id(folder.to_str().unwrap());
         assert!(bucket[..bucket.len() - 1].contains('_') && bucket.ends_with('_'));
-        assert_eq!(decode_bucket_folder(&bucket), BucketFolder::Folder(folder.clone()));
+        assert_eq!(
+            decode_bucket_folder(&bucket),
+            BucketFolder::Folder(folder.clone())
+        );
 
         // `_` also stands for `+`: a `~` on a base64 group boundary puts a `+`
         // into the name, so the bucket hides a second reading — the round-trip
         // check picks the one that re-encodes to the bucket.
         let mut plus_name = String::from("plus");
-        while !base64_encode(base.join(&format!("{plus_name}~")).to_str().unwrap().as_bytes())
-            .contains('+')
+        while !base64_encode(
+            base.join(&format!("{plus_name}~"))
+                .to_str()
+                .unwrap()
+                .as_bytes(),
+        )
+        .contains('+')
         {
             plus_name.push('x');
         }
@@ -555,7 +844,10 @@ mod tests {
         std::fs::create_dir_all(&plus).unwrap();
         let plus_bucket = sanitize_workspace_id(plus.to_str().unwrap());
         assert!(plus_bucket.contains('_'));
-        assert_eq!(decode_bucket_folder(&plus_bucket), BucketFolder::Folder(plus.clone()));
+        assert_eq!(
+            decode_bucket_folder(&plus_bucket),
+            BucketFolder::Folder(plus.clone())
+        );
 
         // A path long enough to be cut at 64 characters is no longer decodable:
         // the 48 bytes that survive fall inside a name, not on a directory.
@@ -576,14 +868,19 @@ mod tests {
         // turn one into an unrelated path.
         for (bucket, window) in [
             ("L1VzZXJzL2FwcGxlL0Rlc2t0b3A_", "/Users/apple/Desktop"),
-            ("L1VzZXJzL2FwcGxlL0RvY3VtZW50cy9BSS1QUk9KRUNUL215LWNvZGUtdGVhbXM_", "/Users/apple/Documents/AI-PROJECT/my-code-teams"),
+            (
+                "L1VzZXJzL2FwcGxlL0RvY3VtZW50cy9BSS1QUk9KRUNUL215LWNvZGUtdGVhbXM_",
+                "/Users/apple/Documents/AI-PROJECT/my-code-teams",
+            ),
         ] {
             assert_eq!(sanitize_workspace_id(window), bucket);
             match decode_bucket_folder(bucket) {
                 BucketFolder::Folder(path) => assert_eq!(path, Path::new(window)),
                 // The folder simply is not on this machine.
                 BucketFolder::Unknown => {}
-                BucketFolder::RootlessWindow => panic!("{bucket} must not decode to the filesystem root"),
+                BucketFolder::RootlessWindow => {
+                    panic!("{bucket} must not decode to the filesystem root")
+                }
             }
         }
     }
@@ -597,9 +894,15 @@ mod tests {
 
         // A decodable bucket wins, even when the hook's cwd says otherwise.
         let bucket = sanitize_workspace_id(folder.to_str().unwrap());
-        assert_eq!(decode_bucket_folder(&bucket), BucketFolder::Folder(folder.clone()));
+        assert_eq!(
+            decode_bucket_folder(&bucket),
+            BucketFolder::Folder(folder.clone())
+        );
         std::fs::create_dir_all(base.join(&bucket).join("conversations/conv-1")).unwrap();
-        assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-1", Some(&other)), Some(folder.clone()));
+        assert_eq!(
+            resolve_vscode_folder(&[base.clone()], "conv-1", Some(&other)),
+            Some(folder.clone())
+        );
         // A bucket carrying inner `_` characters (base64 `/` and `=`) decodes too.
         let mut umlaut = String::from("ÿÿÿÿ");
         while base.join(&umlaut).to_str().unwrap().len() % 3 == 0 {
@@ -609,13 +912,22 @@ mod tests {
         std::fs::create_dir_all(&special).unwrap();
         let special_bucket = sanitize_workspace_id(special.to_str().unwrap());
         std::fs::create_dir_all(base.join(&special_bucket).join("conversations/conv-6")).unwrap();
-        assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-6", None), Some(special.clone()));
+        assert_eq!(
+            resolve_vscode_folder(&[base.clone()], "conv-6", None),
+            Some(special.clone())
+        );
         // Roots without the session are skipped; the next root is consulted.
-        assert_eq!(resolve_vscode_folder(&[base.join("nope"), base.clone()], "conv-1", None), Some(folder.clone()));
+        assert_eq!(
+            resolve_vscode_folder(&[base.join("nope"), base.clone()], "conv-1", None),
+            Some(folder.clone())
+        );
 
         // A `/` bucket is a window without a folder: there is nothing to open.
         std::fs::create_dir_all(base.join("Lw__").join("conversations/conv-2")).unwrap();
-        assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-2", Some(&folder)), None);
+        assert_eq!(
+            resolve_vscode_folder(&[base.clone()], "conv-2", Some(&folder)),
+            None
+        );
         assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-2", None), None);
 
         // A bucket cut at 64 characters cannot be decoded, but a cwd that
@@ -625,21 +937,36 @@ mod tests {
         let long_bucket = sanitize_workspace_id(long.to_str().unwrap());
         assert_eq!(decode_bucket_folder(&long_bucket), BucketFolder::Unknown);
         std::fs::create_dir_all(base.join(&long_bucket).join("conversations/conv-3")).unwrap();
-        assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-3", Some(&long)), Some(long.clone()));
+        assert_eq!(
+            resolve_vscode_folder(&[base.clone()], "conv-3", Some(&long)),
+            Some(long.clone())
+        );
         // A cwd from another window is not adopted, and neither is none.
-        assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-3", Some(&folder)), None);
+        assert_eq!(
+            resolve_vscode_folder(&[base.clone()], "conv-3", Some(&folder)),
+            None
+        );
         assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-3", None), None);
 
         // No bucket anywhere: the cwd is the only candidate, and only when it
         // could be a folder at all.
-        assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-4", Some(&folder)), Some(folder.clone()));
+        assert_eq!(
+            resolve_vscode_folder(&[base.clone()], "conv-4", Some(&folder)),
+            Some(folder.clone())
+        );
         for cwd in [None, Some(Path::new("/")), Some(Path::new("relative/path"))] {
             assert_eq!(resolve_vscode_folder(&[base.clone()], "conv-4", cwd), None);
         }
         // A session id that could walk out of the history root is never used.
-        assert_eq!(resolve_vscode_folder(&[base.clone()], "../conv-1", Some(&folder)), None);
+        assert_eq!(
+            resolve_vscode_folder(&[base.clone()], "../conv-1", Some(&folder)),
+            None
+        );
         // A missing root is silent: the cwd fallback still applies.
-        assert_eq!(resolve_vscode_folder(&[base.join("nope")], "conv-1", Some(&folder)), Some(folder.clone()));
+        assert_eq!(
+            resolve_vscode_folder(&[base.join("nope")], "conv-1", Some(&folder)),
+            Some(folder.clone())
+        );
         std::fs::remove_dir_all(&base).ok();
     }
     #[test]
@@ -648,7 +975,11 @@ mod tests {
         assert_eq!(target.as_str(), "codeg://session/214");
         let encoded = link("codeg://session/task%2Fa%20%3F%23");
         assert_eq!(encoded.path(), "/task%2Fa%20%3F%23");
-        for invalid in ["codeg://session/", "codeg://other/214", "codeg://user@session/214"] {
+        for invalid in [
+            "codeg://session/",
+            "codeg://other/214",
+            "codeg://user@session/214",
+        ] {
             assert!(session_target(invalid).is_err());
         }
     }

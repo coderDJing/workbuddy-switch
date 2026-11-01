@@ -5,7 +5,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { defaultSettings } from '../src/settings-config.js';
 const home = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-studio-runtime-'));
-const binary = path.resolve('target/release/agent-studio-runtime');
+const binary = path.resolve(process.env.AGENT_COMPANION_RUNTIME || `target/release/agent-studio-runtime${process.platform === 'win32' ? '.exe' : ''}`);
 const settings = defaultSettings();
 settings.notifications.desktop = true;
 for (const source of Object.keys(settings.sources)) settings.sources[source].enabled = ['codex','codebuddy-ide'].includes(source);

@@ -1,4 +1,4 @@
-use super::{ensure_hook_binary, hook_command};
+use super::{ensure_hook_binary, hook_command, hook_command_legacy};
 use agent_studio_core::{
     adapters::{
         codebuddy_settings_files, workbuddy_edition, workbuddy_settings_files, Collector,
@@ -54,13 +54,29 @@ fn command(c: &Collector, source: &str, file: &Path) -> String {
         },
     )
 }
+/// 历史形态命令（POSIX 单引号）。Windows 上无法执行，仅用于识别旧安装并在重装时清理。
+fn command_legacy(c: &Collector, source: &str, file: &Path) -> String {
+    hook_command_legacy(
+        &binary(c),
+        &c.home,
+        source,
+        if source == "workbuddy" {
+            Some(workbuddy_edition(file))
+        } else {
+            None
+        },
+    )
+}
 // Match complete commands at known application-owned locations, never substring names.
 fn owned(c: &Collector, source: &str, file: &Path, value: &Value) -> bool {
     let cmd = text(&value["command"]);
-    if cmd == command(c, source, file) {
+    if cmd == command(c, source, file) || cmd == command_legacy(c, source, file) {
         return true;
     }
-    if source == "workbuddy" && cmd == hook_command(&binary(c), &c.home, source, None) {
+    if source == "workbuddy"
+        && (cmd == hook_command(&binary(c), &c.home, source, None)
+            || cmd == hook_command_legacy(&binary(c), &c.home, source, None))
+    {
         return true;
     }
     let name = match source {
@@ -294,7 +310,11 @@ mod tests {
         assert_eq!(get(&restarted)["sources"][0]["status"], "installed");
         let codex_hooks = read(&home.join(".codex/hooks.json")).unwrap();
         for event in CODEX_EVENTS {
-            assert_eq!(codex_hooks["hooks"][event][0]["hooks"][0]["async"], Value::Null, "{event} must complete before Codex leaves the turn");
+            assert_eq!(
+                codex_hooks["hooks"][event][0]["hooks"][0]["async"],
+                Value::Null,
+                "{event} must complete before Codex leaves the turn"
+            );
         }
         std::fs::write(home.join(".codex/hooks.json"), "malformed").unwrap();
         assert_eq!(get(&restarted)["sources"][0]["status"], "error");

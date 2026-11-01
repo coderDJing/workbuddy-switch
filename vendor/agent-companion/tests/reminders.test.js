@@ -67,12 +67,12 @@ test('questionKey separates rounds and payloads but not unrelated changes', () =
   assert.notEqual(questionKey(waiting), questionKey({...waiting, session: {...waiting.session, pending: [{id: 'q2', text: '乙'}]}}));
 });
 
-test('a Codex permission check raises a cautious reminder only after 90 seconds', () => {
+test('a Codex permission check raises a cautious reminder only after 45 seconds', () => {
   const now = 100_000;
-  const running = item({session: {...item().session, status: 'running', pending: [], permissionChecks: [{id: 'perm:a', ts: now - 89_999}]}});
+  const running = item({session: {...item().session, status: 'running', pending: [], permissionChecks: [{id: 'perm:a', ts: now - 44_999}]}});
   const reminders = session => automaticReminderItems([item({session})], 'connected', new Map(), now);
   assert.deepEqual(reminders(running.session), []);
-  assert.deepEqual(reminders({...running.session, permissionChecks: [{id: 'perm:a', ts: now - 90_000}]}).map(row => row.id), ['codex:1']);
+  assert.deepEqual(reminders({...running.session, permissionChecks: [{id: 'perm:a', ts: now - 45_000}]}).map(row => row.id), ['codex:1']);
   assert.deepEqual(reminders({...running.session, permissionChecks: []}), [], 'resolution withdraws the reminder');
   assert.deepEqual(reminders({...running.session, status: 'done'}).map(row => row.id), ['codex:1'], 'completion follows the existing done reminder');
   assert.deepEqual(reminders({...running.session, stale: true}), [], 'stale sessions do not raise a new reminder');

@@ -70,6 +70,13 @@ jobs:
       - name: npm launcher tests
         run: node --test npm/tests/cli-launcher.test.cjs
 
+      - name: Companion core and runtime tests
+        run: cargo test --manifest-path vendor/agent-companion/Cargo.toml -p agent-studio-core -p agent-studio-runtime --locked
+
+      - name: Companion desktop tests
+        if: runner.os != 'Linux'
+        run: cargo test --manifest-path vendor/agent-companion/Cargo.toml -p tauri-plugin-agent-studio --locked
+
       # linux 专属 cfg 分支只在 ubuntu 上展开（macOS 侧由 lint job 覆盖）。
       # rust-embed 要求 #[folder] 目录存在，先建 dist 占位（前端产物由 build.yml 产出）。
       - name: Clippy (linux cfg)
@@ -149,3 +156,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: node --test scripts/vendor-agent-companion.test.mjs
+
+      - name: Companion frontend checks
+        working-directory: vendor/agent-companion
+        run: |
+          npm ci
+          npm run typecheck
+          npm run lint
+          npm test
+          npm run build
+          npm run test:bundle

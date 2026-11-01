@@ -48,6 +48,7 @@ use crate::modules::session_link::{
     PreviewMemberBinding, RecoveryIssue, RecoveryReport, StoreState, SyncDecision, SyncMode,
     SyncVerdict, NORMALIZATION_VERSION, OPERATION_VERSION,
 };
+use crate::modules::session_pinned;
 use crate::modules::variant::WbVariant;
 
 /// 关联存储的命名空间：决定关联表 / 基线 / 预览凭据 / 存储锁的名字。
@@ -563,7 +564,8 @@ fn session_row_owner(paths: &SessionPaths, cid: &str) -> Option<String> {
     .flatten()
 }
 
-/// 在 workbuddy.db 中把源会话行复制为新 id（动态列，覆盖 id/user_id/时间戳）。
+/// 在 workbuddy.db 中把源会话行复制为新 id（动态列，覆盖 id/user_id/updated_at，
+/// created_at 透传源值）。
 ///
 /// 跨档时源行与目标行分属两个库：源行从 `source_paths` 读取（跨档用只读连接），
 /// 目标行按**目标表列序取交集**写入——目标存在而源没有的列不写，由库默认值补齐，
@@ -626,7 +628,15 @@ fn insert_session_copy(
         let value = match col.as_str() {
             "id" => rusqlite::types::Value::Text(new_cid.to_string()),
             "user_id" => rusqlite::types::Value::Text(target_uid.to_string()),
-            "created_at" | "updated_at" => rusqlite::types::Value::Integer(now_ms()),
+            // created_at 是会话历史起点，复制不伪造：源值原样透传，只有源值为 NULL
+            // （旧库没记）时才回退到当前时间，避免把 NULL 下传破坏客户端的时间排序。
+            "created_at" => match value {
+                rusqlite::types::Value::Null => rusqlite::types::Value::Integer(now_ms()),
+                source => source,
+            },
+            // updated_at 恒写当前时间：它驱动「最近更新」排序，副本沿用源值会直接沉底，
+            // 而且副本此刻确实刚被创建。
+            "updated_at" => rusqlite::types::Value::Integer(now_ms()),
             "deleted_at" => rusqlite::types::Value::Null,
             _ => value,
         };
@@ -870,6 +880,71 @@ struct CopySide<'a> {
     account_id: Option<String>,
 }
 
+/// 置顶同步的一方：档位数据根 + 档位 + 账号 uid。
+///
+/// 置顶状态不在数据库里，而在账号自己的 `conversations.json`；跨档复制/同步时两侧
+/// 各自解析各自的数据根（CN `.workbuddy` / AI `.workbuddy-ai`），不会串档。
+struct PinnedSide<'a> {
+    paths: &'a SessionPaths,
+    variant: WbVariant,
+    uid: &'a str,
+}
+
+/// 复制/同步写完之后把置顶状态带到目标账号，返回报告里的 `pinned` 片段。
+///
+/// 置顶是附属信息：任何失败只落进 `skippedReason`，不进 `errors`、不置 `needsRecovery`，
+/// 也不改变复制/同步本身的成败。单向追加且幂等，重跑不会写出重复条目，因此不需要
+/// OpPhase 之类的恢复语义。
+fn sync_pinned_after_write(
+    source: PinnedSide<'_>,
+    target: PinnedSide<'_>,
+    mapping: &[(String, String)],
+) -> Value {
+    let backup_dir = target.paths.store_root.join("backups").join("pinned");
+    session_pinned::sync_between(
+        session_pinned::PinnedSyncTarget {
+            data_root: &source.paths.data_root,
+            variant: source.variant,
+            uid: source.uid,
+        },
+        session_pinned::PinnedSyncTarget {
+            data_root: &target.paths.data_root,
+            variant: target.variant,
+            uid: target.uid,
+        },
+        mapping,
+        &backup_dir,
+    )
+    .to_json()
+}
+
+/// 本次复制产生的 source → target sessionId 映射（新建副本与复用的已有副本都算）。
+fn copy_pinned_mapping(copied: &[Value], already_linked: &[Value]) -> Vec<(String, String)> {
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for (items, target_field) in [(copied, "newId"), (already_linked, "sessionId")] {
+        for item in items {
+            if let (Some(id), Some(target)) = (
+                item.get("id").and_then(Value::as_str),
+                item.get(target_field).and_then(Value::as_str),
+            ) {
+                pairs.push((id.to_string(), target.to_string()));
+            }
+        }
+    }
+    pairs
+}
+
+// Only successfully synchronized, explicitly selected groups may change pins.
+fn pinned_store_for_synced(store: &LinkStore, synced: &[Value]) -> LinkStore {
+    let mut selected = store.clone();
+    selected.groups.retain(|group| {
+        synced
+            .iter()
+            .any(|item| item["groupId"].as_str() == Some(group.id.as_str()))
+    });
+    selected
+}
+
 /// 同档与跨档复制的统一流程：双档锁 → 恢复 → 逐会话复制 → 报告。
 ///
 /// `resolve_source_paths` 用于恢复未完成的**跨档**操作时解析其源档数据根；
@@ -974,11 +1049,28 @@ fn run_copy(
     // 本次请求之后仍存在未完成操作（含本次刚留下的）→ 必须提示恢复需求。
     let unfinished_after = session_link::pending_operations(target.paths, target.variant);
     let unusable = !recovery.is_clean() || !unfinished_after.is_empty();
+    // 置顶状态同步（写目标账号自己的 conversations.json）：放在复制结果之后、报告组装
+    // 之前。门禁与档位操作锁都在上面，此处 App 已确认停止写入；任何失败只进报告，
+    // 不影响复制成败与 needsRecovery。
+    let pinned = sync_pinned_after_write(
+        PinnedSide {
+            paths: source.paths,
+            variant: source.variant,
+            uid: &source.uid,
+        },
+        PinnedSide {
+            paths: target.paths,
+            variant: target.variant,
+            uid: &target.uid,
+        },
+        &copy_pinned_mapping(&copied, &already_linked),
+    );
     let mut report = json!({
         "sourceUid": &source.uid,
         "targetUid": &target.uid,
         "copied": copied,
         "alreadyLinked": already_linked,
+        "pinned": pinned,
     });
     // 跨档复制在报告里带两侧档位；同档报告保持原字段（逐字不变）。
     if source.variant != target.variant {
@@ -1627,10 +1719,15 @@ pub const REASON_PREVIEW_STALE: &str = "previewStale";
 const SESSION_STATUS_ARCHIVED: &str = "archived";
 /// 允许被传导为归档的**目标终态**白名单。
 ///
-/// 只列非活跃终态：`active`（当前激活）与 `working`（生成中）必须排除，避免把正在
-/// 使用的会话收进归档。精确匹配而非「非 active/working 即允许」——NULL、未知值与
-/// 缺列都不授予归档权限（真实库存在 `Pending` 这类合法但语义未定的默认值）。
-const ARCHIVE_TARGET_TERMINAL_STATUSES: [&str; 3] = ["completed", "error", "terminated"];
+/// 排除 `working`（生成中）：正在生成的会话不能被收进归档。精确匹配而非「非
+/// working 即允许」——NULL、未知值与缺列都不授予归档权限（真实库存在 `Pending`
+/// 这类合法但语义未定的默认值）。
+///
+/// `active`（当前激活）在列内：切号前客户端被关掉时，目标行常残留一个陈旧的
+/// `active`，把它排除会导致该会话的归档状态永远无法与来源收敛。写入侧已有三重防线
+/// 兜住真正的活跃会话——`app_running` 门禁拦住 App 在跑的目标档、`planned_status_change`
+/// 写前重核、以及事务内按前置状态等值匹配的条件 UPDATE（前置值已变则零行命中）。
+const ARCHIVE_TARGET_TERMINAL_STATUSES: [&str; 4] = ["completed", "error", "terminated", "active"];
 /// 预览项与预览绑定里的归档动作取值。
 const ARCHIVE_ACTION_STATUS_ONLY: &str = "statusOnly";
 
@@ -1772,7 +1869,8 @@ fn read_member_status(paths: &SessionPaths, cid: &str) -> Result<SessionStatus, 
 
 /// 单向粘滞归档资格：来源已归档，且目标处于允许被归档的终态。
 ///
-/// 不反向传导取消归档；缺列、NULL、未知值与活跃态一律不授权。
+/// 不反向传导取消归档；缺列、NULL、未知值与生成中（`working`）一律不授权。
+/// 陈旧 `active` 视作可归档终态，由写入侧门禁兜底（见白名单注释）。
 fn archive_qualifies(source: &SessionStatus, target: &SessionStatus) -> bool {
     let SessionStatus::Present(Some(source_status)) = source else {
         return false;
@@ -2139,8 +2237,9 @@ fn preview_group_item(
         .iter()
         .map(|mode| mode.as_str())
         .collect();
-    // 归档资格：独立于正文判定，只看双方会话行的状态。来源已归档 + 目标处于非活跃
-    // 终态才授权；缺列/NULL/活跃态一律不授权，也不因此影响既有正文判定的结果。
+    // 归档资格：独立于正文判定，只看双方会话行的状态。来源已归档 + 目标处于终态白名单
+    // 才授权；缺列/NULL/生成中（working）一律不授权，陈旧 active 放行（写入侧门禁兜底），
+    // 也不因此影响既有正文判定的结果。
     // 不可验证的判定不提供任何动作：此时既没有正文模式也不会下发凭据，若仍写出
     // archiveAction，前端摘要会显示「仅同步归档」而用户实际勾不了，等于误导。
     let mut archive = preview_archive_state(
@@ -2345,6 +2444,14 @@ fn plan_sync_selection(
     }
     // 本次是否随写入把目标对齐为归档：凭据里授权过才允许，且必须在本次重新核验。
     let archive_authorized = binding.archive_action.as_deref() == Some(ARCHIVE_ACTION_STATUS_ONLY);
+    if archive_authorized
+        && live.target_status.as_deref() == Some("active")
+        && context.target_running
+    {
+        return SyncItemOutcome::Rejected {
+            message: "目标会话仍标记 active，且客户端正在运行；请完全退出客户端后再同步归档".into(),
+        };
+    }
     // 判定已按当前内容重算：mode 必须仍然成立，unknown 不得被覆盖绕过。
     // `StatusOnly` 不属于任何正文判定（`allows` 恒为 false），走独立的归档资格门禁。
     if selection.mode == SyncMode::StatusOnly {
@@ -2478,6 +2585,7 @@ struct SyncContext<'a> {
     target_account_id: Option<String>,
     /// 本次进入写入前仍未完成的操作（同一目标上不得再写一次）。
     pending: &'a [Operation],
+    target_running: bool,
 }
 
 fn sync_sessions_for_switch_at(
@@ -2550,6 +2658,7 @@ fn sync_sessions_for_switch_at(
                 .map(String::from),
         ),
         pending: &pending,
+        target_running: is_app_running(variant),
     };
     match blocked {
         Some(reason) => {
@@ -2591,7 +2700,30 @@ fn sync_sessions_for_switch_at(
 
     let unfinished_after = session_link::pending_operations(paths, variant);
     let needs_recovery = store_broken || !recovery.is_clean() || !unfinished_after.is_empty();
-    let mut report = json!({ "synced": synced, "skipped": skipped, "errors": errors });
+    // 置顶仅随本次成功同步的组更新；待恢复或未勾选的组不写入。
+    let pinned = sync_pinned_after_write(
+        PinnedSide {
+            paths,
+            variant,
+            uid: &source_uid,
+        },
+        PinnedSide {
+            paths,
+            variant,
+            uid: &target_uid,
+        },
+        &store
+            .as_ref()
+            .filter(|_| !needs_recovery)
+            .map(|store| {
+                let selected = pinned_store_for_synced(store, &synced);
+                let store = &selected;
+                session_pinned::link_mapping(store, variant, &source_uid, variant, &target_uid)
+            })
+            .unwrap_or_default(),
+    );
+    let mut report =
+        json!({ "synced": synced, "skipped": skipped, "errors": errors, "pinned": pinned });
     if needs_recovery {
         report["needsRecovery"] = json!(true);
     }
@@ -2739,6 +2871,7 @@ fn sync_sessions_cross_at(
         target_uid: &target.uid,
         target_account_id: target.account_id.clone(),
         pending: &pending,
+        target_running: is_app_running(variant),
     };
     match blocked {
         Some(reason) => {
@@ -2780,7 +2913,36 @@ fn sync_sessions_cross_at(
 
     let unfinished_after = session_link::pending_operations(target.paths, variant);
     let needs_recovery = store_broken || !recovery.is_clean() || !unfinished_after.is_empty();
-    let mut report = json!({ "synced": synced, "skipped": skipped, "errors": errors });
+    // 跨档同样仅更新本次成功同步的组。
+    let pinned = sync_pinned_after_write(
+        PinnedSide {
+            paths: source.paths,
+            variant: source.variant,
+            uid: &source.uid,
+        },
+        PinnedSide {
+            paths: target.paths,
+            variant: target.variant,
+            uid: &target.uid,
+        },
+        &store
+            .as_ref()
+            .filter(|_| !needs_recovery)
+            .map(|store| {
+                let selected = pinned_store_for_synced(store, &synced);
+                let store = &selected;
+                session_pinned::link_mapping(
+                    store,
+                    source.variant,
+                    &source.uid,
+                    target.variant,
+                    &target.uid,
+                )
+            })
+            .unwrap_or_default(),
+    );
+    let mut report =
+        json!({ "synced": synced, "skipped": skipped, "errors": errors, "pinned": pinned });
     if needs_recovery {
         report["needsRecovery"] = json!(true);
     }
@@ -4371,21 +4533,30 @@ mod tests {
         ///
         /// 默认值与真实库一致（`Pending`，不在终态白名单内），避免「缺省即可归档」。
         fn create_db_with_status(&self) {
+            self.create_db_with_status_column("status TEXT NOT NULL DEFAULT 'Pending'");
+        }
+
+        /// `status` 可空的历史形态：验证「NULL 不授予归档权限」时必须能真的写出 NULL。
+        fn create_db_with_nullable_status(&self) {
+            self.create_db_with_status_column("status TEXT");
+        }
+
+        fn create_db_with_status_column(&self, status_column: &str) {
             let conn = Connection::open(self.paths.workbuddy_db()).unwrap();
-            conn.execute_batch(
+            conn.execute_batch(&format!(
                 "CREATE TABLE sessions (
                     id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
                     title TEXT,
                     custom_title TEXT,
-                    status TEXT NOT NULL DEFAULT 'Pending',
+                    {status_column},
                     cwd TEXT,
                     created_at INTEGER,
                     updated_at INTEGER,
                     deleted_at INTEGER,
                     is_playground INTEGER
-                );",
-            )
+                );"
+            ))
             .unwrap();
         }
 
@@ -4432,6 +4603,13 @@ mod tests {
             .unwrap();
         }
 
+        /// 把状态置为 NULL（旧库/NULL 语义），验证白名单不授予 NULL 归档权限。
+        fn set_status_null(&self, id: &str) {
+            let conn = Connection::open(self.paths.workbuddy_db()).unwrap();
+            conn.execute("UPDATE sessions SET status = NULL WHERE id = ?1", [id])
+                .unwrap();
+        }
+
         /// 设置更新时间戳（构造「本次时间戳已落库」的中断现场）。
         fn set_updated_at(&self, id: &str, updated_at: i64) {
             let conn = Connection::open(self.paths.workbuddy_db()).unwrap();
@@ -4440,6 +4618,38 @@ mod tests {
                 rusqlite::params![updated_at, id],
             )
             .unwrap();
+        }
+
+        /// 设置历史起点时间戳（`None` 造 NULL：旧库没记下创建时间的形态）。
+        fn set_created_at(&self, id: &str, created_at: Option<i64>) {
+            let conn = Connection::open(self.paths.workbuddy_db()).unwrap();
+            conn.execute(
+                "UPDATE sessions SET created_at = ?1 WHERE id = ?2",
+                rusqlite::params![created_at, id],
+            )
+            .unwrap();
+        }
+
+        fn created_at_of(&self, id: &str) -> Option<i64> {
+            let conn = Connection::open(self.paths.workbuddy_db()).unwrap();
+            conn.query_row(
+                "SELECT created_at FROM sessions WHERE id = ?1",
+                [id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten()
+        }
+
+        fn updated_at_of(&self, id: &str) -> Option<i64> {
+            let conn = Connection::open(self.paths.workbuddy_db()).unwrap();
+            conn.query_row(
+                "SELECT updated_at FROM sessions WHERE id = ?1",
+                [id],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .ok()
+            .flatten()
         }
 
         fn status_of(&self, id: &str) -> Option<String> {
@@ -4512,6 +4722,41 @@ mod tests {
 
         fn first_copy_id(&self, report: &Value) -> String {
             report["copied"][0]["newId"].as_str().unwrap().to_string()
+        }
+
+        /// 某账号的置顶状态文件（客户端真实位置：`storage/user-<uid>-personal/global`）。
+        fn pinned_file(&self, uid: &str) -> PathBuf {
+            session_pinned::conversations_file(&self.paths.data_root, uid)
+        }
+
+        /// 造一份账号置顶文件（`pinned` 为客户端里的 `pinned` 数组内容）。
+        fn write_pinned(&self, uid: &str, pinned: Value) {
+            let file = self.pinned_file(uid);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, json!({ "pinned": pinned }).to_string()).unwrap();
+        }
+
+        /// 读某账号的置顶文件原文（不存在返回 None）。
+        fn read_pinned_document(&self, uid: &str) -> Option<Value> {
+            let text = std::fs::read_to_string(self.pinned_file(uid)).ok()?;
+            Some(serde_json::from_str(&text).unwrap())
+        }
+
+        /// 某账号置顶文件里的 id 列表（顺序即客户端顺序；文件不存在返回空）。
+        fn pinned_ids(&self, uid: &str) -> Vec<String> {
+            self.read_pinned_document(uid)
+                .and_then(|document| {
+                    document
+                        .get("pinned")
+                        .and_then(Value::as_array)
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|item| item["id"].as_str().map(str::to_string))
+                                .collect()
+                        })
+                })
+                .unwrap_or_default()
         }
     }
 
@@ -5102,6 +5347,62 @@ mod tests {
         assert!(session_backup::scan_lifecycle(&env.paths)
             .records
             .is_empty());
+    }
+
+    /// 复制保留源 `created_at`（会话历史起点不伪造），`updated_at` 仍写当前时间。
+    ///
+    /// `updated_at` 驱动客户端「最近更新」排序：副本沿用源的旧值会直接沉底，而副本
+    /// 此刻确实刚被创建，写当前时间才符合事实。
+    #[test]
+    fn copy_preserves_source_created_at_and_refreshes_updated_at() {
+        let env = ready_env("copy-created-at");
+        // 源行由 add_session 写成 created_at=1000 / updated_at=2000。
+        let report = copy(&env, "uid-b", &["sess-1"]);
+        let new_id = env.first_copy_id(&report);
+
+        assert_eq!(env.created_at_of("sess-1"), Some(1000), "源行 created_at");
+        assert_eq!(
+            env.created_at_of(&new_id),
+            Some(1000),
+            "副本必须沿用源的 created_at"
+        );
+        let copied_updated_at = env.updated_at_of(&new_id).expect("副本必须有 updated_at");
+        assert!(
+            copied_updated_at > 2000,
+            "副本 updated_at 必须是本次时间而不是源的旧值：{copied_updated_at}"
+        );
+        assert_eq!(
+            env.updated_at_of("sess-1"),
+            Some(2000),
+            "源行时间戳不得被复制改动"
+        );
+    }
+
+    /// 源行 `created_at` 为 NULL（旧库没记）时回退当前时间：NULL 下传会破坏客户端排序。
+    #[test]
+    fn copy_falls_back_to_now_when_source_created_at_is_null() {
+        let env = ready_env("copy-created-at-null");
+        env.add_session("sess-2", "uid-a", "标题二");
+        env.add_body("sess-2", &body_text("sess-2"));
+        env.set_created_at("sess-2", None);
+        assert_eq!(
+            env.created_at_of("sess-2"),
+            None,
+            "源行 created_at 必须是 NULL"
+        );
+
+        let before = now_ms();
+        let report = copy(&env, "uid-b", &["sess-2"]);
+        let new_id = env.first_copy_id(&report);
+        let after = now_ms();
+
+        let copied_created_at = env
+            .created_at_of(&new_id)
+            .expect("源值为 NULL 时必须回退为具体时间，不得下传 NULL");
+        assert!(
+            (before..=after).contains(&copied_created_at),
+            "回退值必须是本次时间：{copied_created_at} 不在 [{before}, {after}]"
+        );
     }
 
     /// 批量复制逐项清理：进入下一项之前，上一成功项的临时目录已经消失（不累积备份）。
@@ -6149,11 +6450,30 @@ mod tests {
         assert_eq!(outcome, DbCopyOutcome::Inserted);
 
         let conn = Connection::open(env.paths.workbuddy_db()).unwrap();
-        let (id, user_id, title, deleted_at, is_playground): (String, String, String, Option<i64>, i64) =
-            conn.query_row(
-                "SELECT id, user_id, title, deleted_at, is_playground FROM sessions WHERE id = 'new-uuid-1'",
+        let (id, user_id, title, deleted_at, is_playground, created_at, updated_at): (
+            String,
+            String,
+            String,
+            Option<i64>,
+            i64,
+            Option<i64>,
+            Option<i64>,
+        ) = conn
+            .query_row(
+                "SELECT id, user_id, title, deleted_at, is_playground, created_at, updated_at \
+                 FROM sessions WHERE id = 'new-uuid-1'",
                 [],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+                |r| {
+                    Ok((
+                        r.get(0)?,
+                        r.get(1)?,
+                        r.get(2)?,
+                        r.get(3)?,
+                        r.get(4)?,
+                        r.get(5)?,
+                        r.get(6)?,
+                    ))
+                },
             )
             .unwrap();
         assert_eq!(id, "new-uuid-1");
@@ -6161,6 +6481,11 @@ mod tests {
         assert_eq!(title, "旧标题"); // 普通列原样保留
         assert_eq!(deleted_at, None);
         assert_eq!(is_playground, 0);
+        assert_eq!(created_at, Some(1000), "created_at 必须是源的会话起点");
+        assert!(
+            updated_at.is_some_and(|value| value > 2000),
+            "updated_at 必须刷新为本次时间：{updated_at:?}"
+        );
     }
 
     #[test]
@@ -6223,6 +6548,157 @@ mod tests {
         assert_eq!(session_row_owner(&env.paths(), "missing"), None);
         env.delete_row("sess-1");
         assert_eq!(session_row_owner(&env.paths(), "sess-1"), None);
+    }
+
+    // ---------------------------------------------------------------------------
+    // 置顶状态同步（#205：置顶记录在账号自己的 conversations.json，不在 SQLite）
+    // ---------------------------------------------------------------------------
+
+    /// 复制已置顶的会话 → 目标账号的置顶文件出现映射后的新 id，groupKey 原样跟随。
+    #[test]
+    fn copy_brings_pinned_state_to_target_account() {
+        let env = ready_env("pinned-copy");
+        env.write_pinned("uid-a", json!([{"id": "sess-1", "groupKey": "/ws/a"}]));
+
+        let report = copy(&env, "uid-b", &["sess-1"]);
+        assert!(report.get("errors").is_none(), "{report}");
+        let new_id = env.first_copy_id(&report);
+        assert_eq!(report["pinned"]["added"], 1, "{report}");
+        assert!(
+            report["pinned"].get("skippedReason").is_none(),
+            "成功时不该出现原因：{report}"
+        );
+
+        let document = env
+            .read_pinned_document("uid-b")
+            .expect("目标账号的置顶文件必须被创建");
+        assert_eq!(document["pinned"][0]["id"], new_id.as_str());
+        assert_eq!(document["pinned"][0]["groupKey"], "/ws/a");
+        // 源账号自己的置顶文件不动；目标文件原本不存在，所以没有可备份的原字节。
+        assert_eq!(env.pinned_ids("uid-a"), vec!["sess-1".to_string()]);
+        assert!(!env.paths.store_root.join("backups").join("pinned").exists());
+    }
+
+    /// 目标账号已有的置顶保持在前；二次复制命中已有关联 → 幂等零新增、文件不改动。
+    #[test]
+    fn copy_keeps_existing_target_pins_and_is_idempotent() {
+        let env = ready_env("pinned-copy-idempotent");
+        env.write_pinned("uid-a", json!([{"id": "sess-1", "groupKey": "/ws/a"}]));
+        env.write_pinned("uid-b", json!([{"id": "own", "groupKey": "/ws/z"}]));
+
+        let first = copy(&env, "uid-b", &["sess-1"]);
+        let new_id = env.first_copy_id(&first);
+        assert_eq!(first["pinned"]["added"], 1, "{first}");
+        assert_eq!(
+            env.pinned_ids("uid-b"),
+            vec!["own".to_string(), new_id.clone()],
+            "目标已有条目顺序在前，新条目追加到尾部"
+        );
+
+        // 写前备份的是覆盖前的原字节（只含目标自己的那条置顶）。
+        let backup_dir = env.paths.store_root.join("backups").join("pinned");
+        let backups: Vec<PathBuf> = std::fs::read_dir(&backup_dir)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        assert_eq!(backups.len(), 1, "每次改写前留一份备份");
+        assert!(backups[0]
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("cn-uid-b-"));
+        let backed_up: Value =
+            serde_json::from_str(&std::fs::read_to_string(&backups[0]).unwrap()).unwrap();
+        assert_eq!(backed_up["pinned"].as_array().unwrap().len(), 1);
+        assert_eq!(backed_up["pinned"][0]["id"], "own");
+
+        // 二次复制：该会话已在关联组里 → 复用同一副本，置顶不重复追加。
+        let before = std::fs::read_to_string(env.pinned_file("uid-b")).unwrap();
+        let second = copy(&env, "uid-b", &["sess-1"]);
+        assert_eq!(
+            second["alreadyLinked"].as_array().unwrap().len(),
+            1,
+            "{second}"
+        );
+        assert_eq!(second["pinned"]["added"], 0, "{second}");
+        assert_eq!(
+            std::fs::read_to_string(env.pinned_file("uid-b")).unwrap(),
+            before
+        );
+        assert_eq!(env.pinned_ids("uid-b").len(), 2);
+    }
+
+    /// 目标置顶文件损坏：只进 `pinned.skippedReason`，复制照旧成功、不置 needsRecovery。
+    #[test]
+    fn copy_survives_corrupt_target_pinned_file() {
+        let env = ready_env("pinned-copy-corrupt");
+        env.write_pinned("uid-a", json!([{"id": "sess-1", "groupKey": "/ws/a"}]));
+        let file = env.pinned_file("uid-b");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "{ 坏掉的置顶文件").unwrap();
+
+        let report = copy(&env, "uid-b", &["sess-1"]);
+        assert_eq!(report["copied"].as_array().unwrap().len(), 1, "{report}");
+        assert!(report.get("errors").is_none(), "{report}");
+        assert!(report["needsRecovery"].is_null(), "{report}");
+        assert_eq!(report["pinned"]["added"], 0, "{report}");
+        assert!(
+            report["pinned"]["skippedReason"]
+                .as_str()
+                .unwrap()
+                .contains("目标账号置顶记录不可用"),
+            "{report}"
+        );
+        // 损坏文件一字不改（不覆盖、不新建）。
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "{ 坏掉的置顶文件");
+    }
+
+    /// 源账号没有置顶：不创建目标文件（复制本身照常成功）。
+    #[test]
+    fn copy_without_pinned_source_leaves_target_file_alone() {
+        let env = ready_env("pinned-copy-none");
+        let report = copy(&env, "uid-b", &["sess-1"]);
+        assert_eq!(report["pinned"]["added"], 0, "{report}");
+        assert!(report["pinned"].get("skippedReason").is_none(), "{report}");
+        assert!(!env.pinned_file("uid-b").exists());
+        assert!(!env.paths.store_root.join("backups").join("pinned").exists());
+    }
+
+    /// 切号同步路径：置顶映射取自关联表，复制之后才置顶的会话在同步时补到目标账号。
+    #[test]
+    fn sync_brings_pinned_state_to_target_account() {
+        let env = ready_env("pinned-sync");
+        let (group_id, token, target_id) = fast_forward_scene(&env);
+        // Another existing link is deliberately not selected for this sync.
+        env.add_session("not-selected", "uid-a", "other");
+        env.add_body("not-selected", &body_text("not-selected"));
+        copy(&env, "uid-b", &["not-selected"]);
+        assert!(
+            !env.pinned_file("uid-b").exists(),
+            "复制时源账号还没有置顶，目标不应出现文件"
+        );
+        // 复制之后才置顶：只有同步路径能把它带过去。
+        env.write_pinned(
+            "uid-a",
+            json!([
+                {"id": "sess-1", "groupKey": "/ws/a"},
+                {"id": "not-selected", "groupKey": "/ws/a"}
+            ]),
+        );
+
+        let report = sync(
+            &env,
+            "uid-b",
+            &[selection(&group_id, &token, SyncMode::FastForward)],
+        );
+        assert_eq!(report["synced"].as_array().unwrap().len(), 1, "{report}");
+        assert_eq!(report["pinned"]["added"], 1, "{report}");
+        assert_eq!(env.pinned_ids("uid-b"), vec![target_id]);
+        assert_eq!(
+            env.read_pinned_document("uid-b").unwrap()["pinned"][0]["groupKey"],
+            "/ws/a"
+        );
     }
 
     // ---------------------------------------------------------------------------
@@ -6371,6 +6847,19 @@ mod tests {
             let conn = Connection::open(self.paths(variant).workbuddy_db()).unwrap();
             conn.execute("DELETE FROM sessions WHERE id = ?1", [id])
                 .unwrap();
+        }
+
+        /// 某档某账号的置顶状态文件（客户端真实位置）。
+        fn pinned_file(&self, variant: WbVariant, uid: &str) -> PathBuf {
+            let paths = self.paths(variant);
+            session_pinned::conversations_file(&paths.data_root, uid)
+        }
+
+        /// 造一份某档某账号的置顶文件。
+        fn write_pinned(&self, variant: WbVariant, uid: &str, pinned: Value) {
+            let file = self.pinned_file(variant, uid);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, json!({ "pinned": pinned }).to_string()).unwrap();
         }
     }
 
@@ -6553,6 +7042,47 @@ mod tests {
         assert_eq!(source_member.variant, Some(WbVariant::Cn));
         let target_member = session_link::find_member(group, "uid-b", &new_id).unwrap();
         assert_eq!(target_member.variant, Some(WbVariant::Ai));
+    }
+
+    /// 跨档置顶同步：源/目标各自的数据根，源档只读、目标档只写自己的账号文件。
+    #[test]
+    fn cross_copy_syncs_pinned_into_target_variant_data_root() {
+        let env = CrossEnv::new("pinned-cn-to-ai");
+        env.create_db(WbVariant::Cn, "");
+        env.create_edge_db(WbVariant::Cn);
+        env.create_db(WbVariant::Ai, "");
+        env.create_edge_db(WbVariant::Ai);
+        env.add_session(WbVariant::Cn, "sess-1", "uid-a", "标题一");
+        env.add_body(WbVariant::Cn, "sess-1", &body_text("sess-1"));
+        env.write_pinned(
+            WbVariant::Cn,
+            "uid-a",
+            json!([{"id": "sess-1", "groupKey": "/ws/a"}]),
+        );
+
+        let report = cross_copy(
+            &env,
+            WbVariant::Cn,
+            "uid-a",
+            WbVariant::Ai,
+            "uid-b",
+            &["sess-1"],
+        );
+        let new_id = report["copied"][0]["newId"].as_str().unwrap().to_string();
+        assert_eq!(report["pinned"]["added"], 1, "{report}");
+
+        // 目标档数据根下的目标账号文件才有新置顶，条目 id 已换成本档新副本。
+        let target_file = env.pinned_file(WbVariant::Ai, "uid-b");
+        let document: Value =
+            serde_json::from_str(&std::fs::read_to_string(&target_file).unwrap()).unwrap();
+        assert_eq!(document["pinned"][0]["id"], new_id.as_str());
+        assert_eq!(document["pinned"][0]["groupKey"], "/ws/a");
+        // 两条数据根互不串：源档没有目标账号文件，目标档没有改源账号文件。
+        assert!(!env.pinned_file(WbVariant::Cn, "uid-b").exists());
+        let source_file = env.pinned_file(WbVariant::Cn, "uid-a");
+        let source_document: Value =
+            serde_json::from_str(&std::fs::read_to_string(&source_file).unwrap()).unwrap();
+        assert_eq!(source_document["pinned"][0]["id"], "sess-1");
     }
 
     /// 目标档列集合与源档不同（双向缺列）时按目标列取交集：不写 NULL、不报错。
@@ -8632,6 +9162,17 @@ mod tests {
         env
     }
 
+    /// 同上的历史形态：`status` 列可空（用来验证 NULL 不授予归档权限）。
+    fn ready_env_with_nullable_status(name: &str) -> Env {
+        let env = Env::new(name);
+        env.create_db_with_nullable_status();
+        env.create_edge_db(WbVariant::Cn);
+        env.set_login("uid-a");
+        env.add_session("sess-1", "uid-a", "标题一");
+        env.add_body("sess-1", &body_text("sess-1"));
+        env
+    }
+
     fn member_last_synced_at(env: &Env, group_id: &str, uid: &str) -> Option<i64> {
         group_snapshot(env, group_id)
             .members
@@ -8781,10 +9322,14 @@ mod tests {
         assert_eq!(env.body_files().len(), 2, "不得产生第二份正文");
     }
 
-    /// 终态白名单：completed / error / terminated 可归档；活跃态与未知值一律不授权。
+    /// 终态白名单：completed / error / terminated / active 可归档；`working`、`Pending`、
+    /// NULL 与未知值一律不授权。
+    ///
+    /// `active` 在列内（issue #204）：切号前客户端被关掉常留下陈旧 `active`，排除它会让
+    /// 归档状态永远无法与来源收敛；真正的活跃会话由写入侧三重门禁兜底。
     #[test]
     fn status_sync_accepts_only_terminal_target_statuses() {
-        for allowed in ["completed", "error", "terminated"] {
+        for allowed in ["completed", "error", "terminated", "active"] {
             let env = ready_env_with_status(&format!("status-allow-{allowed}"));
             let (group_id, token, target_id) = archive_scene(&env, allowed);
             let report = sync(
@@ -8803,7 +9348,7 @@ mod tests {
                 "{allowed}"
             );
         }
-        for denied in ["active", "working", "Pending", "unknown-value"] {
+        for denied in ["working", "Pending", "unknown-value"] {
             let env = ready_env_with_status(&format!("status-deny-{denied}"));
             let (_, target_id) = archive_row_scene(&env, denied);
             let preview_report = preview(&env, "uid-b");
@@ -8819,6 +9364,97 @@ mod tests {
                 "{denied}: 不得写入状态"
             );
         }
+        // status 为 NULL：非终态，不授权（列可空的旧库才写得进 NULL）。
+        let env = ready_env_with_nullable_status("status-deny-null");
+        let report = copy(&env, "uid-b", &["sess-1"]);
+        let target_id = env.first_copy_id(&report);
+        env.set_status("sess-1", "archived");
+        env.set_status_null(&target_id);
+        let preview_report = preview(&env, "uid-b");
+        let group = &preview_report["groups"][0];
+        assert_eq!(group["verdict"], "identical", "{preview_report}");
+        assert!(group["archiveAction"].is_null(), "NULL: {group}");
+        assert!(
+            group["previewToken"].is_null(),
+            "NULL: 无动作即无凭据 {group}"
+        );
+        assert_eq!(env.status_of(&target_id), None, "NULL: 不得写入状态");
+    }
+
+    /// issue #204：目标停在切号前残留的陈旧 `active` 时，归档必须仍能收敛。
+    ///
+    /// 场景＝上次切号后客户端被关掉/崩掉，目标行停在 `active` 且没有在跑的生成；
+    /// 旧白名单把它当活跃态排除，会让该会话的归档状态永久卡住。
+    #[test]
+    fn status_sync_archives_stale_active_target() {
+        let env = ready_env_with_status("status-stale-active");
+        let (group_id, token, target_id) = archive_scene(&env, "active");
+        let before = preview(&env, "uid-b");
+        let group = &before["groups"][0];
+        assert_eq!(group["archiveAction"], "statusOnly", "{before}");
+        assert_eq!(group["availableModes"], json!([]), "归档不是正文覆盖");
+        assert_eq!(group["defaultChecked"], false, "归档默认不勾选");
+        let body_before = body_bytes(&env, &target_id);
+
+        let report = sync(
+            &env,
+            "uid-b",
+            &[selection(&group_id, &token, SyncMode::StatusOnly)],
+        );
+        assert_eq!(report["synced"].as_array().unwrap().len(), 1, "{report}");
+        assert_eq!(report["synced"][0]["mode"], "statusOnly");
+        assert_eq!(report["synced"][0]["verdict"], "identical");
+        assert_eq!(
+            env.status_of(&target_id).as_deref(),
+            Some("archived"),
+            "陈旧 active 目标必须被归档"
+        );
+        assert_eq!(
+            body_bytes(&env, &target_id),
+            body_before,
+            "只改状态，正文不得变化"
+        );
+    }
+
+    #[test]
+    fn active_archive_requires_the_client_to_be_stopped() {
+        let env = ready_env_with_status("active-client-running");
+        let (group_id, token, target_id) = archive_scene(&env, "active");
+        let report = sync_sessions_for_switch_at(
+            &env.paths(),
+            WbVariant::Cn,
+            &env.target("uid-b"),
+            &[selection(&group_id, &token, SyncMode::StatusOnly)],
+            |_| true,
+        )
+        .unwrap();
+        assert!(report["synced"].as_array().unwrap().is_empty());
+        assert!(!report["errors"].as_array().unwrap().is_empty());
+        assert_eq!(env.status_of(&target_id).as_deref(), Some("active"));
+    }
+
+    /// 陈旧的 `active` 目标一旦真的开始生成（`working`），归档立刻重新被拒绝。
+    ///
+    /// 放行 `active` 靠的是「生成中的会话不会停在 active」这个前提：客户端在生成时
+    /// 先把状态写成 `working`，所以 `working` 仍在白名单外，仍是硬拦截。
+    #[test]
+    fn status_sync_denies_when_stale_active_target_starts_generating() {
+        let env = ready_env_with_status("status-active-to-working");
+        let (group_id, token, target_id) = archive_scene(&env, "active");
+        env.set_status(&target_id, "working");
+
+        let report = sync(
+            &env,
+            "uid-b",
+            &[selection(&group_id, &token, SyncMode::StatusOnly)],
+        );
+        assert!(report["synced"].as_array().unwrap().is_empty(), "{report}");
+        assert_eq!(report["skipped"][0]["reasonCode"], REASON_PREVIEW_STALE);
+        assert_eq!(
+            env.status_of(&target_id).as_deref(),
+            Some("working"),
+            "生成中的会话不得被收进归档"
+        );
     }
 
     /// 单向粘滞：来源未归档、目标已归档时，绝不反向取消归档。
@@ -8917,6 +9553,45 @@ mod tests {
         assert_eq!(report["synced"].as_array().unwrap().len(), 1, "{report}");
         assert_eq!(report["synced"][0]["mode"], "fastForward");
         assert_eq!(env.status_of(&target_id).as_deref(), Some("archived"));
+        assert_eq!(
+            std::fs::read_to_string(env.body_path(&target_id)).unwrap(),
+            incoming_text(&env, "sess-1", &target_id),
+            "正文必须含来源新记录"
+        );
+        assert_ne!(
+            session_row(&env, &target_id).3,
+            updated_before,
+            "正文写入照旧更新时间"
+        );
+    }
+
+    /// 陈旧 `active` 目标 + 正文快进：归档作为正文写入的副作用一并生效。
+    ///
+    /// 正文模式的状态写入走 `planned_status_change`（写前重核，不查白名单）与事务内
+    /// 按前置状态等值匹配的条件 UPDATE，因此 active 目标既能被归档、现场被改成
+    /// `working` 时又会被跳过。
+    #[test]
+    fn fast_forward_archives_stale_active_target_as_side_effect() {
+        let env = ready_env_with_status("status-ff-stale-active");
+        let (group_id, token, target_id) = fast_forward_archive_scene(&env, "active");
+        let preview = preview(&env, "uid-b");
+        let group = &preview["groups"][0];
+        assert_eq!(group["availableModes"], json!(["fastForward"]));
+        assert_eq!(group["archiveAction"], "statusOnly");
+
+        let updated_before = session_row(&env, &target_id).3;
+        let report = sync(
+            &env,
+            "uid-b",
+            &[selection(&group_id, &token, SyncMode::FastForward)],
+        );
+        assert_eq!(report["synced"].as_array().unwrap().len(), 1, "{report}");
+        assert_eq!(report["synced"][0]["mode"], "fastForward");
+        assert_eq!(
+            env.status_of(&target_id).as_deref(),
+            Some("archived"),
+            "陈旧 active 目标必须随正文一并归档"
+        );
         assert_eq!(
             std::fs::read_to_string(env.body_path(&target_id)).unwrap(),
             incoming_text(&env, "sess-1", &target_id),

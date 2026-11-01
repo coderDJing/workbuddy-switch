@@ -1,5 +1,7 @@
 # workbuddy-switch
 
+本仓库是 [changexbc/workbuddy-switch](https://github.com/changexbc/workbuddy-switch) 的社区维护分支，维护完整的 GUI 与 CLI 体验，覆盖账号、认证、会话迁移、用量统计、客户端切换及会话悬浮窗。现有修复、维护计划、验证方式与发布状态见 [Fork 维护说明](docs/FORK-MAINTENANCE.md)。
+
 WorkBuddy、CodeBuddy IDE、CodeBuddy CLI 与 VS Code CodeBuddy 插件账号切换桌面 App（Tauri），四者均支持国内版 / 国际版，并提供积分到期与 Token 用量监控。
 
 <p align="center">
@@ -12,7 +14,9 @@ WorkBuddy、CodeBuddy IDE、CodeBuddy CLI 与 VS Code CodeBuddy 插件账号切�
 
 ## 快速开始
 
-前往 [GitHub Releases](https://github.com/changexbc/workbuddy-switch/releases/latest) 下载对应平台的安装包：
+以下下载链接指向上游发行版，不包含本维护分支新增的修复；使用这些修复请先按 [CLI 构建说明](docs/cli.md#构建与维护) 从源码构建。
+
+前往 [上游 GitHub Releases](https://github.com/changexbc/workbuddy-switch/releases/latest) 下载对应平台的安装包：
 
 | 平台 | 安装包 | 安装方式 |
 | --- | --- | --- |
@@ -45,9 +49,10 @@ xattr -rd com.apple.quarantine "/Applications/workbuddy-switch.app"
 | CodeBuddy CLI | 与 WorkBuddy 复用同一账号库，默认账号独立；切换后立即生效，无需重启 CLI |
 | CodeBuddy IDE | 支持切换 CodeBuddy IDE 桌面客户端账号，并可在弹窗中勾选复制会话，与 CodeBuddy CLI 相互独立 |
 | VS Code CodeBuddy 插件 | 支持切换 VS Code 内的 CodeBuddy 插件账号；VS Code 运行时可自动关闭并在写入后重新打开 |
-| JetBrains IDE 插件 | 支持切换 IntelliJ IDEA / PyCharm 内的 CodeBuddy 插件账号，一次切换写入所有装了插件的 IDE；IDE 运行时可自动关闭并在写入后重新打开 |
+| JetBrains IDE 插件 | 支持切换 JetBrains 全家桶（IDEA / PyCharm / WebStorm / PhpStorm / GoLand / CLion / RubyMine / DataGrip / Rider / Aqua / DataSpell / MPS 等）与 Android Studio 内的 CodeBuddy 插件账号，一次切换写入所有装了插件的 IDE；IDE 运行时可自动关闭并在写入后重新打开 |
 | 插件会话复制 | 切换插件账号时，可把当前插件账号的会话复制给目标账号（加法，源账号不变） |
 | 自动轮换 | 后台把积分最紧迫的账号设为 CodeBuddy CLI 后续启动账号；检测到 CLI 会话运行时会跳过 |
+| WebDAV 备份 / 跨设备同步 | 把完整账号库（含 token 等授权信息）与各功能配置端到端加密备份到私有 WebDAV 服务器；新设备配置同一服务器与加密密码即可恢复；「同步」拉取合并 + 整库回推（同 UID 和客户端类型匹配，仅接受明确更新的凭据，冲突提示；ETag 防并发覆盖） |
 | 自动更新 | 从 GitHub Releases 检查新版本，整包更新经签名校验 |
 | 会话悬浮窗 | 桌面版内置 Agent Companion 悬浮栏，在桌面集中显示 Codex / WorkBuddy / CodeBuddy / Codeg 会话的运行中 / 待确认 / 已完成状态；悬停查看详情，支持跳转时点击回到原会话，托盘可临时隐藏 |
 | 权限检测 | macOS 授权引导（App 管理 / 完全磁盘访问拖拽授权 + 自动检测） |
@@ -60,7 +65,7 @@ xattr -rd com.apple.quarantine "/Applications/workbuddy-switch.app"
 | CodeBuddy IDE | ✅ | ✅ | ✅ | — | ✅ |
 | CodeBuddy CLI | ✅ | — | — | ✅ | — |
 | VS Code CodeBuddy 插件 | ✅ | ✅ | ✅ | — | ✅ |
-| JetBrains IDE 插件（IDEA / PyCharm） | ✅ | — | ✅ | — | — |
+| JetBrains IDE 插件（全家桶 / Android Studio） | ✅ | — | ✅ | — | — |
 
 ✅ 表示支持，— 表示不支持。设置 →「支持工具」可按客户端逐个开启 / 关闭入口；关闭后该端入口与状态轮询一并隐藏，不影响账号库与其它端；JetBrains 端默认关闭，可在设置中随时打开。
 
@@ -96,6 +101,7 @@ CodeBuddy CLI 切换时会先关闭正在运行的 CLI，当前会话会中断�
 6. **开关各端入口**：设置 →「支持工具」可按客户端逐个开启 / 关闭入口；关闭后该端在账号页隐藏、不再轮询状态，不影响账号库。JetBrains 端默认关闭
 7. **自动轮换**：设置 → CodeBuddy CLI 自动轮换，开启后按积分紧迫程度自动设置默认账号
 8. **更新**：应用会自动检查公开 GitHub Releases；发现新版本后可在左下角直接升级，也可从设置页打开 Release 页面手动下载
+9. **WebDAV 备份 / 跨设备同步**：设置 →「WebDAV 备份 / 跨设备同步」，配置私有 WebDAV 服务器（地址 / 用户名 / 口令 / 远端目录）与备份加密密码；「立即备份」把整库账号与功能配置加密上传，「从云端恢复」可勾选账号并可选同时写回配置，「同步」拉取合并后回推整库（同 UID 和客户端类型匹配，旧凭据不会覆盖新凭据，冲突提示；ETag 防止并发覆盖）
 
 ## 界面预览
 
