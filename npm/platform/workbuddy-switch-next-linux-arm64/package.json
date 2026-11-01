@@ -1,0 +1,19 @@
+{
+  "name": "workbuddy-switch-next-linux-arm64",
+  "version": "0.2.0-beta.1",
+  "description": "workbuddy-switch-next-linux-arm64 platform binary",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coderDJing/workbuddy-switch-next.git"
+  }
+}

@@ -1,10 +1,10 @@
-//! workbuddy-switch CLI：npm 安装形态的入口。
+//! workbuddy-switch-next CLI：npm 安装形态的入口。
 //!
 //! ```bash
-//! workbuddy-switch              # 启动本地服务 + 打开浏览器 webui
-//! workbuddy-switch serve        # 只起服务不开浏览器（--port / --no-open）
-//! workbuddy-switch status       # 终端输出当前账号
-//! workbuddy-switch version      # 版本号
+//! workbuddy-switch-next              # 启动本地服务 + 打开浏览器 webui
+//! workbuddy-switch-next serve        # 只起服务不开浏览器（--port / --no-open）
+//! workbuddy-switch-next status       # 终端输出当前账号
+//! workbuddy-switch-next version      # 版本号
 //! ```
 
 mod api;
@@ -96,7 +96,7 @@ fn print_status(variant: WbVariant) {
         })
     });
     let running = process::is_workbuddy_running(variant);
-    println!("workbuddy-switch v{}", update::APP_VERSION);
+    println!("workbuddy-switch-next v{}", update::APP_VERSION);
     println!("WorkBuddy 运行中: {}", if running { "是" } else { "否" });
     match current {
         Some(c) => {
@@ -171,7 +171,7 @@ async fn serve(options: &cli::Options) {
         }
     };
 
-    println!("workbuddy-switch v{}", update::APP_VERSION);
+    println!("workbuddy-switch-next v{}", update::APP_VERSION);
     println!("webui: http://{addr}");
     println!("按 Ctrl+C 停止服务。");
 

@@ -1,12 +1,12 @@
 # WorkBuddy Switch Next 维护说明
 
-本仓库基于 [changexbc/workbuddy-switch](https://github.com/changexbc/workbuddy-switch)，在 [coderDJing/workbuddy-switch](https://github.com/coderDJing/workbuddy-switch) 继续维护。保留上游版权与 MIT 许可，修复仍可向上游提交。
+本仓库基于 [changexbc/workbuddy-switch](https://github.com/changexbc/workbuddy-switch)，在 [coderDJing/workbuddy-switch-next](https://github.com/coderDJing/workbuddy-switch-next) 继续维护。保留上游版权与 MIT 许可，修复仍可向上游提交。
 
 ## 项目名称
 
 用户于 2026-11-01 选定 **WorkBuddy Switch Next**。项目介绍、应用侧栏、网页/桌面窗口标题及系统通知使用该名称；简介为“持续维护的 WorkBuddy 多账号管理工具，支持桌面 GUI 与 CLI”。保留原项目来源、版权与 MIT 许可。
 
-当前仓库地址仍是 `coderDJing/workbuddy-switch`。本次先统一展示名称；安装包 productName、应用 identifier、CLI 命令、npm 包名及更新源随独立发布一起迁移，避免名称与打包脚本或用户数据路径脱节。尚未发布独立 Next 安装包或 npm 包。
+当前仓库为 `coderDJing/workbuddy-switch-next`，首个独立维护预览版本为 `0.2.0-beta.1`。安装名称、应用标识、npm 包名和更新签名已独立；账号库与认证锁继续使用原目录。
 
 ### 正式图标
 
@@ -96,6 +96,12 @@
 
 ## 发布状态
 
-本次建立维护分支不发布安装包，也不发布 npm 包。README 中的下载与演示链接仍指向上游；上游安装包不包含本分支新增修复。
+首个 Next 维护预览版为 `0.2.0-beta.1`。四平台构建、签名、完整更新清单及校验和由 `.github/workflows/build.yml` 产出。手动运行仅上传构建 artifacts；推送匹配版本的 tag 后才发布版本 Release，并更新 preview 更新入口。
 
-当前自动更新配置、默认更新仓库和 npm 分发仍沿用上游设置。从源码构建不代表已建立独立更新渠道。发布自己的维护版前，应统一处理版本标识、更新地址、签名、npm 包名与安装/下载说明，验证从旧版升级时的行为，再发布对应产物。
+Next 使用独立签名和应用标识，预览更新指向自有仓库的 preview Release，清单内的下载 URL 固定到版本 tag。更新源配置写入 `github_config_next.json`；旧配置仅作一次性读取与代理迁移，不修改原配置或账号文件。
+
+本机没有 npm registry 发布登录态；`PUBLISH_NPM=false`，包名、平台分包和兼容命令已准备。配置有效的 NPM_TOKEN 并显式启用该变量后，再发布 npm，避免桌面发布被 npm 凭据缺失阻断。
+
+Windows 本机验证、三平台 CI 与正式发布结果按当前执行回执更新；配置完成不能替代这些运行结果。发布操作和签名维护详见 [开发指南](DEVELOPMENT.md)。
+
+本轮 Windows 试装通过，实际安装位置为 `D:\Program Files\WorkBuddy Switch Next`。签名安装包、独立 CLI、版本与更新来源已在隔离环境核对，账号库无实际切号操作。验证回执位于本机 `target/next-smoke-*`。

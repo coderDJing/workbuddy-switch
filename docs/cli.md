@@ -103,3 +103,9 @@ cargo build -p wb-switch-server --release
 产物为 target/release/wb-switch（Windows 为 wb-switch.exe），Rust 需 1.89 或更新版本。测试使用 `WB_SWITCH_HOME` 隔离账号库与 CLI 配置；三平台 CI 包含 CLI 子进程与 npm 入口，本地通过不能代替跨平台 CI。
 
 CLI 模块位于 crates/wb-switch-server/src/cli/，客户端操作集中在 Target 分派，账号与余额服务保持共享。core 不依赖 Tauri。认证锁覆盖 token 轮换和本地提交，当前按账号库串行化；账号库损坏时拒绝覆盖，缓存与统计拒绝迟到结果。并发锁、OAuth 保存和字段兼容的细节以 core 实现及测试为准。
+
+## Next 分发与旧命令
+
+Next 主命令为 `workbuddy-switch-next`；npm 包同时提供 `workbuddy-switch` 兼容别名，两者调用同一启动器并读取同一账号库。npm registry 尚未发布时，请使用 Release 中的独立 CLI 或本地构建的 `wb-switch`。独立 CLI 可重命名为 `workbuddy-switch-next`（Windows 加 `.exe`）后放入 PATH。
+
+原版 npm 包与 Next 包的旧命令别名会占用相同全局命令位置；迁移时先正常卸载旧 npm 包，再安装 Next，不需要删除 `~/.wb-switch`。

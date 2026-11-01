@@ -12,25 +12,25 @@ WorkBuddy、CodeBuddy IDE、CodeBuddy CLI 与 VS Code CodeBuddy 插件账号切�
 
 多账号共享登录态，一键切换 WorkBuddy 登录账号。**会话复制**：把当前账号的会话以新 id 复制给目标账号，源账号数据不受影响，云端归属目标账号。**关联会话**：复制过的会话会自动建立跨账号关联，集中查看各账号副本状态，并把新增内容同步过去。
 
-**在线演示**：[打开 GitHub Pages 演示](https://changexbc.github.io/workbuddy-switch/)（只读演示；账号、积分与请求记录均为虚构数据，所有业务操作均已禁用，另含只读的会话悬浮栏演示）
+**在线演示**：[打开 Next 只读演示](https://coderdjing.github.io/workbuddy-switch-next/)（只读演示；账号、积分与请求记录均为虚构数据，所有业务操作均已禁用，另含只读的会话悬浮栏演示）
 
 ## 快速开始
 
-以下下载链接指向上游发行版，不包含本维护分支新增的修复；使用这些修复请先按 [CLI 构建说明](docs/cli.md#构建与维护) 从源码构建。
+首个维护预览版为 **0.2.0-beta.1**。安装包以 [Next 预览版发布页](https://github.com/coderDJing/workbuddy-switch-next/releases/tag/preview) 实际产物为准，也可按 [构建说明](docs/cli.md#构建与维护) 从源码构建。
 
-前往 [上游 GitHub Releases](https://github.com/changexbc/workbuddy-switch/releases/latest) 下载对应平台的安装包：
+前往 [Next 预览版 Releases](https://github.com/coderDJing/workbuddy-switch-next/releases/tag/preview) 下载对应平台的安装包：
 
 | 平台 | 安装包 | 安装方式 |
 | --- | --- | --- |
-| macOS Apple Silicon（M 系列，arm64） | `workbuddy-switch_<版本>_aarch64.dmg` | 打开 DMG，将 `workbuddy-switch.app` 拖入「应用程序」 |
-| macOS Intel（x86_64） | `workbuddy-switch_<版本>_x86_64.dmg` | 打开 DMG，将 `workbuddy-switch.app` 拖入「应用程序」 |
-| Windows x64 | `workbuddy-switch_<版本>_x64-setup.exe` | 运行安装程序并按提示完成安装 |
-| Linux x64 | `workbuddy-switch_<版本>_amd64.deb` / `workbuddy-switch_<版本>_amd64.AppImage` | Debian/Ubuntu 安装 `.deb`；其他发行版可给 AppImage 添加执行权限后直接运行 |
+| macOS Apple Silicon（M 系列，arm64） | `workbuddy-switch-next-macos-aarch64.dmg` | 打开 DMG，将 `WorkBuddy Switch Next.app` 拖入「应用程序」 |
+| macOS Intel（x86_64） | `workbuddy-switch-next-macos-x86_64.dmg` | 打开 DMG，将 `WorkBuddy Switch Next.app` 拖入「应用程序」 |
+| Windows x64 | `workbuddy-switch-next-windows-x86_64-setup.exe` | 运行安装程序并按提示完成安装 |
+| Linux x64 | `workbuddy-switch-next-linux-x86_64.deb` / `workbuddy-switch-next-linux-x86_64.AppImage` | Debian/Ubuntu 安装 `.deb`；其他发行版可给 AppImage 添加执行权限后直接运行 |
 
 macOS 首次启动若提示无法验证开发者，先在 Finder 中按住 Control 点击应用并选择「打开」，或前往「系统设置 → 隐私与安全性」选择「仍要打开」。仅当安装包来自上述官方 Releases、且系统仍提示「已损坏」时，再执行：
 
 ```bash
-xattr -rd com.apple.quarantine "/Applications/workbuddy-switch.app"
+xattr -rd com.apple.quarantine "/Applications/WorkBuddy Switch Next.app"
 ```
 
 应用能启动但切换账号时提示无权限，请参阅下方 [macOS 权限说明](#macos-权限说明)。
@@ -102,7 +102,7 @@ CodeBuddy CLI 切换时会先关闭正在运行的 CLI，当前会话会中断�
 5. **管理关联会话**：侧栏「关联会话」按客户端查看同一会话在各账号中的副本状态，把新增内容增量同步到目标账号、处理内容分歧；「新增关联会话」可把会话复制到新账号并建立关联
 6. **开关各端入口**：设置 →「支持工具」可按客户端逐个开启 / 关闭入口；关闭后该端在账号页隐藏、不再轮询状态，不影响账号库。JetBrains 端默认关闭
 7. **自动轮换**：设置 → CodeBuddy CLI 自动轮换，开启后按积分紧迫程度自动设置默认账号
-8. **更新**：应用会自动检查公开 GitHub Releases；发现新版本后可在左下角直接升级，也可从设置页打开 Release 页面手动下载
+8. **更新**：应用会自动检查 Next 自有签名的更新源，预览版通过 preview 入口接收更新；发现新版本后可在左下角直接升级，也可从设置页打开 Release 页面手动下载
 9. **WebDAV 备份 / 跨设备同步**：设置 →「WebDAV 备份 / 跨设备同步」，配置私有 WebDAV 服务器（地址 / 用户名 / 口令 / 远端目录）与备份加密密码；「立即备份」把整库账号与功能配置加密上传，「从云端恢复」可勾选账号并可选同时写回配置，「同步」拉取合并后回推整库（同 UID 和客户端类型匹配，旧凭据不会覆盖新凭据，冲突提示；ETag 防止并发覆盖）
 
 ## 界面预览
@@ -140,15 +140,17 @@ Token 统计页按来源展示 Token 总览与趋势、构成占比、活跃热�
 切换账号需要写入 WorkBuddy 认证文件，macOS 要求授权「App 管理」（或「完全磁盘访问」）：
 
 1. 首次切换报「无权限」时，点「打开系统设置」
-2. 优先在 **App 管理** 里打开 workbuddy-switch 开关；若没有，则去 **完全磁盘访问** 把 workbuddy-switch 拖进带箭头的框
+2. 优先在 **App 管理** 里打开 WorkBuddy Switch Next 开关；若没有，则去 **完全磁盘访问** 把 WorkBuddy Switch Next 拖进带箭头的框
 3. 授权后重启本应用生效；设置页「权限检测」可随时验证
 
 ## npm / webui 版本
 
+npm 包名为 `workbuddy-switch-next`，目前尚未发布到 registry；下列安装命令供发布后使用。现在可从 Release 下载独立 CLI，或从源码构建。旧命令 `workbuddy-switch` 将作为兼容别名保留。
+
 ```bash
-npm i -g workbuddy-switch
-workbuddy-switch              # 启动本地服务 + 自动打开浏览器
-workbuddy-switch status       # 终端查看当前账号
+npm i -g workbuddy-switch-next@next
+workbuddy-switch-next              # 启动本地服务 + 自动打开浏览器
+workbuddy-switch-next status       # 终端查看当前账号
 ```
 
 界面与桌面 App 一致，功能覆盖上方全部模块，但不提供会话悬浮窗（桌面版专属）。webui 模式下的 macOS 权限由启动服务的终端进程决定；若终端已授权完全磁盘访问则无需额外操作。
@@ -158,22 +160,28 @@ workbuddy-switch status       # 终端查看当前账号
 无需打开 GUI。`inspect --summary` 一次查询账号、当前 CLI 状态、积分、到期信息和模型限额。
 
 ```bash
-workbuddy-switch inspect --summary              # 一次概览
-workbuddy-switch accounts                       # 账号 ID 列表
-workbuddy-switch status --target codebuddy-cli  # 当前 CLI 账号
-workbuddy-switch credits --summary              # 积分汇总
-workbuddy-switch limits --model hy3             # 模型限额与恢复时间
-workbuddy-switch switch <ACCOUNT_ID> --dry-run  # 切号预览
-workbuddy-switch switch <ACCOUNT_ID>            # 实际切号
+workbuddy-switch-next inspect --summary              # 一次概览
+workbuddy-switch-next accounts                       # 账号 ID 列表
+workbuddy-switch-next status --target codebuddy-cli  # 当前 CLI 账号
+workbuddy-switch-next credits --summary              # 积分汇总
+workbuddy-switch-next limits --model hy3             # 模型限额与恢复时间
+workbuddy-switch-next switch <ACCOUNT_ID> --dry-run  # 切号预览
+workbuddy-switch-next switch <ACCOUNT_ID>            # 实际切号
 ```
 
 默认 JSON，人工阅读加 `--text`；结果在 stdout，进度在 stderr。切号会关闭运行中的 CodeBuddy CLI，不自动重开。未观察到限额不代表模型可用。
 
 摘要省略已过期明细，未来和未知到期条目全部保留。与 GUI 并发写入须使用配套新版，旧发行版不支持共享锁。
 
-完整参数与返回约定见 [CLI 文档](docs/cli.md)，或运行 `workbuddy-switch --help`。
+完整参数与返回约定见 [CLI 文档](docs/cli.md)，或运行 `workbuddy-switch-next --help`。
+
+## 从原版迁移
+
+Next 使用独立应用标识，继续读取原来的 `~/.wb-switch` 账号库、关联记录和共享认证锁。安装前正常退出原版；Next 的更新配置保存在 `github_config_next.json`，不会改写原版的更新配置。macOS 需按新应用名称重新授予权限。
 
 ## 致谢
+
+基于 [changexbc/workbuddy-switch](https://github.com/changexbc/workbuddy-switch) 继续维护，感谢原作者及所有社区贡献者。
 
 感谢 [Linux.do](https://linux.do) 社区。
 

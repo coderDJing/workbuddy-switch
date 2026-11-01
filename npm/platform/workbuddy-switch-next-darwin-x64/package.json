@@ -1,0 +1,19 @@
+{
+  "name": "workbuddy-switch-next-darwin-x64",
+  "version": "0.2.0-beta.1",
+  "description": "workbuddy-switch-next-darwin-x64 platform binary",
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coderDJing/workbuddy-switch-next.git"
+  }
+}

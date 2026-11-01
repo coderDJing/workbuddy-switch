@@ -4954,11 +4954,11 @@ mod tests {
         let ai = SessionPaths::for_variant(WbVariant::Ai);
         assert_eq!(ai.workbuddy_db().parent(), Some(ai.data_root.as_path()));
         assert_ne!(cn.workbuddy_db(), ai.workbuddy_db());
-        // 国际版数据根与国内版不同构，默认文件名为 v4，且同样走动态发现。
-        assert!(ai
-            .edge_sync_db(WbVariant::Ai)
-            .to_string_lossy()
-            .ends_with("edge-sync-mapping-v4.db"));
+        // Both variants dynamically discover the installed mapping version.
+        // Do not pin the result to whichever client version is on this host.
+        let ai_edge = ai.edge_sync_db(WbVariant::Ai);
+        assert_eq!(ai_edge.parent(), Some(ai.data_root.as_path()));
+        assert!(ai_edge.to_string_lossy().contains("edge-sync-mapping-"));
         assert_ne!(
             cn.edge_sync_db(WbVariant::Cn),
             ai.edge_sync_db(WbVariant::Ai)

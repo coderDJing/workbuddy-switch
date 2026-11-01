@@ -232,7 +232,7 @@ pub fn print_result(value: &Value, json_output: bool, ascii_json: bool) {
                 }
             }
         }
-        "version" => println!("workbuddy-switch {}", text(value, "version")),
+        "version" => println!("workbuddy-switch-next {}", text(value, "version")),
         _ => println!("{}", serde_json::to_string_pretty(value).unwrap()),
     }
 }

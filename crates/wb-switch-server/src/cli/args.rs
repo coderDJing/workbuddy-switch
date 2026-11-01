@@ -3,7 +3,9 @@ use super::{protocol::Failure, target::Target};
 use std::collections::BTreeMap;
 use wb_switch_core::modules::variant::WbVariant;
 
-pub const HELP: &str = "workbuddy-switch [COMMAND] [OPTIONS]
+pub const HELP: &str = "workbuddy-switch-next [COMMAND] [OPTIONS]
+
+The legacy workbuddy-switch command is also supported by the npm package.
 
 Commands:
   serve                         Start webui (default when no command is given)

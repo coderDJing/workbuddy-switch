@@ -255,8 +255,8 @@ async function httpCall<T>(cmd: string, args?: Record<string, unknown>): Promise
     const origin = currentOrigin();
     throw new Error(
       origin
-        ? `无法连接 workbuddy-switch 服务（${origin}），请先运行 \`workbuddy-switch\``
-        : `无法连接 workbuddy-switch 服务，请先运行 \`workbuddy-switch\``,
+        ? `无法连接 WorkBuddy Switch Next 服务（${origin}），请先运行 \`workbuddy-switch-next\``
+        : `无法连接 WorkBuddy Switch Next 服务，请先运行 \`workbuddy-switch-next\``,
     );
   }
   const data = await res.json().catch(() => ({}));

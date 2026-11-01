@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// workbuddy-switch npm 入口：spawn 平台二进制（postinstall 复制，见 scripts/install.js）。
+// workbuddy-switch-next npm 入口：spawn 平台二进制（postinstall 复制，见 scripts/install.js）。
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
@@ -23,7 +23,7 @@ if (!FILE) {
 const binPath = path.join(binDir, FILE);
 if (!fs.existsSync(binPath)) {
   console.error(
-    "workbuddy-switch: 未找到平台二进制，请重新安装（npm install -g workbuddy-switch）",
+    "workbuddy-switch-next: 未找到平台二进制，请重新安装（npm install -g workbuddy-switch-next）",
   );
   process.exit(1);
 }
@@ -44,7 +44,7 @@ if (process.platform === "win32") {
   process.on("SIGBREAK", () => forward("SIGBREAK"));
 }
 child.once("error", error => {
-  console.error(`workbuddy-switch: 无法启动平台二进制 (${error.code || "unknown error"})`);
+  console.error(`workbuddy-switch-next: 无法启动平台二进制 (${error.code || "unknown error"})`);
   process.exitCode = 1;
 });
 child.once("close", (code, signal) => {

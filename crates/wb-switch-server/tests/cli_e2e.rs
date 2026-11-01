@@ -258,14 +258,14 @@ fn existing_status_output_is_preserved() {
 }
 
 #[test]
-fn existing_version_output_is_preserved() {
+fn next_version_output_and_json_are_consistent() {
     let sandbox = Sandbox::new();
     for args in [vec!["version"], vec!["--version"], vec!["-V"]] {
         let output = sandbox.run(&args);
         assert!(output.status.success());
         assert_eq!(
             String::from_utf8(output.stdout).unwrap(),
-            format!("workbuddy-switch {}\n", env!("CARGO_PKG_VERSION"))
+            format!("workbuddy-switch-next {}\n", env!("CARGO_PKG_VERSION"))
         );
     }
     assert_eq!(

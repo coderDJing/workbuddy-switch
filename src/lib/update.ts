@@ -1,7 +1,12 @@
-export const GITHUB_OWNER = "changexbc";
-export const GITHUB_REPO = "workbuddy-switch";
+import release from "../../release-config.json";
+
+export const APP_VERSION = release.version;
+export const GITHUB_OWNER = release.owner;
+export const GITHUB_REPO = release.repo;
 export const GITHUB_REPOSITORY_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`;
-export const GITHUB_RELEASE_URL = `${GITHUB_REPOSITORY_URL}/releases/latest`;
+export const GITHUB_RELEASE_URL = release.channel === "preview"
+  ? `${GITHUB_REPOSITORY_URL}/releases/tag/${release.previewTag}`
+  : `${GITHUB_REPOSITORY_URL}/releases/latest`;
 
 /** 在桌面端通过 Tauri opener 打开，在 webui 端打开新标签页。 */
 export async function openReleaseUrl(url = GITHUB_RELEASE_URL): Promise<void> {

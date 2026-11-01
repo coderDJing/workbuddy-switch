@@ -437,7 +437,25 @@ pub fn spawn_periodic_check(app: AppHandle) {
 async fn download_package<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<Option<DownloadedPackage>, String> {
-    let builder = app.updater_builder();
+    let config = update::load_github_config();
+    let owner = config
+        .get("owner")
+        .and_then(Value::as_str)
+        .unwrap_or(update::GITHUB_OWNER);
+    let repo = config
+        .get("repo")
+        .and_then(Value::as_str)
+        .unwrap_or(update::GITHUB_REPO);
+    let endpoints =
+        update::updater_manifest_urls(owner, repo, std::env::consts::OS, std::env::consts::ARCH)
+            .into_iter()
+            .map(|url| tauri::Url::parse(&url))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("更新源地址无效：{error}"))?;
+    let builder = app
+        .updater_builder()
+        .endpoints(endpoints)
+        .map_err(|error| format!("更新源配置无效：{error}"))?;
     let builder = match configured_proxy() {
         Some(proxy) => builder.proxy(
             tauri::Url::parse(&proxy).map_err(|error| format!("更新代理地址无效：{error}"))?,
@@ -540,7 +558,7 @@ fn release_url() -> String {
         .and_then(Value::as_str)
         .filter(|repo| !repo.is_empty())
         .unwrap_or(update::GITHUB_REPO);
-    format!("https://github.com/{owner}/{repo}/releases/latest")
+    update::release_page_url(owner, repo)
 }
 
 // ---------------------------------------------------------------------------

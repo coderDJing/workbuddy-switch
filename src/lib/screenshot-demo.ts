@@ -1,3 +1,4 @@
+import { APP_VERSION, GITHUB_OWNER, GITHUB_REPO, GITHUB_RELEASE_URL } from "./update";
 import type {
   AccountMeta, AppStatus, AutoRotateConfig, CheckinConfig, CheckinLog,
   CodeBuddyCliStatus, CodeBuddyCliSwitchResult, CodeBuddyCnIdeStatus, CreditExpiry, CreditOfficialUsageModel, CreditStatistics,
@@ -803,13 +804,13 @@ function buildDemoSessionGroups(
 /** Read-only demo response provider. It never reads or mutates real user data. */
 export function screenshotDemoResponse(command: string, args?: Record<string, unknown>): unknown {
   const demoAccounts = hydratedAccounts();
-  const appStatus: AppStatus = { running: true, authFile: "/demo/workbuddy/auth.json", current: { uid: demoAccounts[0].uid, nickname: demoAccounts[0].nickname, email: demoAccounts[0].email }, appPath: "/demo/WorkBuddy.app", version: "0.1.24" };
+  const appStatus: AppStatus = { running: true, authFile: "/demo/workbuddy/auth.json", current: { uid: demoAccounts[0].uid, nickname: demoAccounts[0].nickname, email: demoAccounts[0].email }, appPath: "/demo/WorkBuddy.app", version: APP_VERSION };
   const activeIndex = Math.max(0, demoAccounts.findIndex((account) => account.id === demoActiveCliAccountId));
   const activeAccount = demoAccounts[activeIndex] ?? demoAccounts[0];
   const cliStatus: CodeBuddyCliStatus = { configured: true, settingsPresent: true, helperPresent: true, helperSupportsAccountIds: true, activeIndex, activeAccountId: activeAccount.id, activeAccountName: activeAccount.nickname, activeAccountVariant: accountVariant(activeAccount), accountCount: demoAccounts.length, statePath: "/demo/codebuddy-cli-state.json" };
   const config = rotateConfig();
   const rotateStatus: RotateStatus = { config, cliConfigured: true, activeAccountId: demoAccounts[0].id, activeAccountName: demoAccounts[0].nickname, lastCheckAt: atLocalTime(0, 9, 30), lastSwitchAt: atLocalTime(1, 16, 20) };
-  const githubConfig: GithubConfig = { owner: "zhangjia", repo: "wb-switch", proxy: "" };
+  const githubConfig: GithubConfig = { owner: GITHUB_OWNER, repo: GITHUB_REPO, proxy: "" };
   const groupClient = args?.client as SessionGroupClient | undefined;
   const groupScope = args?.variantScope === "ai" ? "ai" : args?.variantScope === "cn" ? "cn" : null;
   const demoGroups = groupClient ? buildDemoSessionGroups(groupClient, groupScope, demoAccounts) : [];
@@ -1000,7 +1001,7 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "get_github_config": return githubConfig;
     case "get_webdav_config": return { url: "https://dav.example.invalid/dav", username: "demo", remotePath: "wb-switch", hasPassword: true };
     case "webdav_info": return { exists: true, accountCount: accounts.length, deviceName: "演示电脑", updatedAt: demoNow, remote: { dirUrl: "https://dav.example.invalid/dav/wb-switch/", fileUrl: "https://dav.example.invalid/dav/wb-switch/wb-switch-backup.wbs" } };
-    case "check_update": return { ok: true, current: "0.1.24", latest: "0.1.25", latestTag: "v0.1.25", hasUpdate: true, releaseName: "更新提示演示", releaseUrl: "https://github.com/changexbc/workbuddy-switch/releases/tag/v0.1.25" };
+    case "check_update": return { ok: true, current: APP_VERSION, latest: "0.2.0-beta.2", latestTag: "v0.2.0-beta.2", hasUpdate: true, releaseName: "更新提示演示", releaseUrl: GITHUB_RELEASE_URL };
     case "get_launch_at_login_enabled": return true;
     case "switch_progress": return { running: false, progress: null };
     default: throw new Error(`演示模式缺少只读数据: ${command}`);

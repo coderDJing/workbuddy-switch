@@ -19,8 +19,9 @@ use crate::modules::config::{
 
 /// 应用当前版本（来自 Cargo.toml package.version）。
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const GITHUB_OWNER: &str = "changexbc";
-pub const GITHUB_REPO: &str = "workbuddy-switch";
+pub const GITHUB_OWNER: &str = "coderDJing";
+pub const GITHUB_REPO: &str = "workbuddy-switch-next";
+pub const UPDATE_CHANNEL: &str = "preview";
 
 /// 成功结果缓存有效期（6 小时）。自动轮询（30 分钟）命中缓存，不发网络请求；
 /// 设置页手动检查传 force=true 绕过缓存强制刷新。
@@ -35,95 +36,104 @@ struct CachedCheck {
 static CACHE: Mutex<Option<CachedCheck>> = Mutex::new(None);
 
 pub fn github_config_file() -> PathBuf {
-    store_dir().join("github_config.json")
+    store_dir().join("github_config_next.json")
 }
 
 /// 读取更新源配置（兼容旧配置文件，但永不返回 token）。
 pub fn load_github_config() -> Value {
-    let mut owner = GITHUB_OWNER.to_string();
-    let mut repo = GITHUB_REPO.to_string();
-    let mut proxy = String::new();
-    let f = github_config_file();
-    let mut should_normalize = false;
-    if f.exists() {
-        if let Ok(text) = std::fs::read_to_string(&f) {
-            if let Ok(v) = serde_json::from_str::<Value>(&text) {
-                if let Some(value) = v.get("owner").and_then(|v| v.as_str()) {
-                    if !value.trim().is_empty() {
-                        owner = value.to_string();
-                    }
-                }
-                if let Some(value) = v.get("repo").and_then(|v| v.as_str()) {
-                    if !value.trim().is_empty() {
-                        repo = value.to_string();
-                    }
-                }
-                if let Some(value) = v.get("proxy").and_then(|v| v.as_str()) {
-                    proxy = value.trim().to_string();
-                }
-                should_normalize = v.get("token").is_some();
-            }
-        }
-    }
-    // 旧版本截图/配置曾使用 changexbc/wb-switch；迁移到实际公开仓库。
-    if owner == "changexbc" && repo == "wb-switch" {
-        repo = GITHUB_REPO.to_string();
-        should_normalize = true;
-    }
-    let normalized = json!({"owner": owner, "repo": repo, "proxy": proxy});
-    if should_normalize {
+    load_github_config_from(
+        &github_config_file(),
+        &store_dir().join("github_config.json"),
+    )
+}
+
+fn load_github_config_from(f: &std::path::Path, legacy: &std::path::Path) -> Value {
+    // Import the old source/proxy once, writing only Next's separate config.
+    // The original application's configuration and shared account store stay intact.
+    let source = if f.exists() { f } else { legacy };
+    let value = std::fs::read_to_string(source)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+    let normalized = normalize_github_config(value.as_ref().unwrap_or(&Value::Null));
+    if value.is_some() && (source != f || value.as_ref() != Some(&normalized)) {
         let _ = atomic_write(
-            &f,
+            f,
             &serde_json::to_string_pretty(&normalized).unwrap_or_default(),
         );
     }
     normalized
 }
 
+fn normalize_github_config(value: &Value) -> Value {
+    let field = |key: &str| {
+        value
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+    };
+    let mut owner = field("owner").unwrap_or(GITHUB_OWNER);
+    let mut repo = field("repo").unwrap_or(GITHUB_REPO);
+    if (owner == "changexbc" && matches!(repo, "workbuddy-switch" | "wb-switch"))
+        || (owner.eq_ignore_ascii_case(GITHUB_OWNER) && repo == "workbuddy-switch")
+    {
+        owner = GITHUB_OWNER;
+        repo = GITHUB_REPO;
+    }
+    json!({"owner": owner, "repo": repo, "proxy": field("proxy").unwrap_or("")})
+}
+
+pub fn release_page_url(owner: &str, repo: &str) -> String {
+    if UPDATE_CHANNEL == "preview" {
+        format!("https://github.com/{owner}/{repo}/releases/tag/preview")
+    } else {
+        format!("https://github.com/{owner}/{repo}/releases/latest")
+    }
+}
+
+fn release_download_base(owner: &str, repo: &str) -> String {
+    if UPDATE_CHANNEL == "preview" {
+        format!("https://github.com/{owner}/{repo}/releases/download/preview")
+    } else {
+        format!("https://github.com/{owner}/{repo}/releases/latest/download")
+    }
+}
+
 /// 保存更新源配置；公开仓库不需要也不保存 GitHub token。
 pub fn save_github_config(cfg: &Value) -> std::io::Result<()> {
-    let owner = cfg
-        .get("owner")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or(GITHUB_OWNER);
-    let repo = cfg
-        .get("repo")
-        .and_then(|v| v.as_str())
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or(GITHUB_REPO);
-    let proxy = cfg
-        .get("proxy")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .unwrap_or("");
-    let clean = json!({"owner": owner, "repo": repo, "proxy": proxy});
+    let clean = normalize_github_config(cfg);
     std::fs::create_dir_all(store_dir())?;
     atomic_write(
         &github_config_file(),
         &serde_json::to_string_pretty(&clean).unwrap_or_default(),
-    )
+    )?;
+    *CACHE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    Ok(())
 }
 
-fn version_tuple(v: &str) -> Vec<i64> {
-    v.trim_start_matches('v')
-        .split('.')
-        .filter_map(|x| x.parse::<i64>().ok())
-        .collect()
+fn parse_version(value: &str) -> Result<semver::Version, semver::Error> {
+    let value = value.trim().trim_start_matches('v');
+    let components = value.split('.').count();
+    let normalized = if components < 3 && value.chars().all(|c| c.is_ascii_digit() || c == '.') {
+        format!("{value}{}", ".0".repeat(3 - components))
+    } else {
+        value.to_string()
+    };
+    semver::Version::parse(&normalized)
 }
 
 /// 版本比较：a > b 返回 1，a < b 返回 -1，相等返回 0。
 pub fn compare_versions(a: &str, b: &str) -> i64 {
-    let ta = version_tuple(a);
-    let tb = version_tuple(b);
-    for i in 0..ta.len().max(tb.len()) {
-        let x = ta.get(i).copied().unwrap_or(0);
-        let y = tb.get(i).copied().unwrap_or(0);
-        if x != y {
-            return if x > y { 1 } else { -1 };
-        }
+    let (Ok(a), Ok(b)) = (parse_version(a), parse_version(b)) else {
+        return 0;
+    };
+    match a.cmp_precedence(&b) {
+        std::cmp::Ordering::Less => -1,
+        std::cmp::Ordering::Equal => 0,
+        std::cmp::Ordering::Greater => 1,
     }
-    0
 }
 
 /// updater manifest 候选 URL（按优先级）。
@@ -136,16 +146,11 @@ pub fn updater_manifest_urls(owner: &str, repo: &str, os: &str, arch: &str) -> V
         "macos" | "darwin" => "macos",
         other => other,
     };
-    let mut urls = vec![format!(
-        "https://github.com/{owner}/{repo}/releases/latest/download/latest.json"
-    )];
-    urls.push(format!(
-        "https://github.com/{owner}/{repo}/releases/latest/download/latest-{os_slug}-{arch}.json"
-    ));
+    let base = release_download_base(owner, repo);
+    let mut urls = vec![format!("{base}/latest.json")];
+    urls.push(format!("{base}/latest-{os_slug}-{arch}.json"));
     if os_slug != "macos" {
-        urls.push(format!(
-            "https://github.com/{owner}/{repo}/releases/latest/download/latest-macos-{arch}.json"
-        ));
+        urls.push(format!("{base}/latest-macos-{arch}.json"));
     }
     urls.dedup();
     urls
@@ -165,7 +170,7 @@ async fn fetch_manifest_version(
     for url in updater_manifest_urls(owner, repo, std::env::consts::OS, std::env::consts::ARCH) {
         let resp = http_request_with_proxy(&url, "GET", None, Some(&headers), proxy).await;
         let version = resp.get("version").and_then(|v| v.as_str()).unwrap_or("");
-        if !version.trim().is_empty() {
+        if parse_version(version).is_ok() {
             return Ok(resp);
         }
         last_err = resp
@@ -254,7 +259,7 @@ pub async fn update_check(proxy: Option<&str>, force: bool) -> Value {
         .map(str::trim)
         .filter(|v| !v.is_empty());
     let proxy = proxy.or(configured_proxy);
-    let release_url = format!("https://github.com/{owner}/{repo}/releases/latest");
+    let release_url = release_page_url(&owner, &repo);
     let current = APP_VERSION.to_string();
 
     // 主端点：updater manifest（release 资产下载，不计 GitHub API 配额）。
@@ -294,6 +299,11 @@ pub async fn update_check(proxy: Option<&str>, force: bool) -> Value {
     }
 
     // 兜底端点：`/releases/latest` 的 302 Location 头解析 tag（仅 manifest 失败时）。
+    // GitHub /latest excludes prereleases. Preview builds use their signed
+    // preview feed and must never fall back to an unrelated stable release.
+    if UPDATE_CHANNEL == "preview" {
+        return json!({"ok": false, "error": "预览版更新源暂不可用", "message": "预览版更新源暂不可用，请稍后重试或打开发布页", "releaseUrl": release_url});
+    }
     match fetch_latest_tag(&owner, &repo, proxy).await {
         Ok(tag) => {
             let latest = tag.strip_prefix('v').unwrap_or(&tag).to_string();
@@ -328,25 +338,26 @@ mod tests {
 
     #[test]
     fn updater_manifest_urls_macos_skips_duplicate_fallback() {
-        let urls = updater_manifest_urls("changexbc", "workbuddy-switch", "macos", "aarch64");
+        let urls = updater_manifest_urls("coderDJing", "workbuddy-switch-next", "macos", "aarch64");
         assert_eq!(
             urls,
             vec![
-                "https://github.com/changexbc/workbuddy-switch/releases/latest/download/latest.json",
-                "https://github.com/changexbc/workbuddy-switch/releases/latest/download/latest-macos-aarch64.json",
+                "https://github.com/coderDJing/workbuddy-switch-next/releases/download/preview/latest.json",
+                "https://github.com/coderDJing/workbuddy-switch-next/releases/download/preview/latest-macos-aarch64.json",
             ]
         );
     }
 
     #[test]
     fn updater_manifest_urls_windows_keeps_macos_compat() {
-        let urls = updater_manifest_urls("changexbc", "workbuddy-switch", "windows", "x86_64");
+        let urls =
+            updater_manifest_urls("coderDJing", "workbuddy-switch-next", "windows", "x86_64");
         assert_eq!(
             urls,
             vec![
-                "https://github.com/changexbc/workbuddy-switch/releases/latest/download/latest.json",
-                "https://github.com/changexbc/workbuddy-switch/releases/latest/download/latest-windows-x86_64.json",
-                "https://github.com/changexbc/workbuddy-switch/releases/latest/download/latest-macos-x86_64.json",
+                "https://github.com/coderDJing/workbuddy-switch-next/releases/download/preview/latest.json",
+                "https://github.com/coderDJing/workbuddy-switch-next/releases/download/preview/latest-windows-x86_64.json",
+                "https://github.com/coderDJing/workbuddy-switch-next/releases/download/preview/latest-macos-x86_64.json",
             ]
         );
     }
@@ -356,5 +367,45 @@ mod tests {
         assert_eq!(compare_versions("0.1.18", "0.1.18"), 0);
         assert_eq!(compare_versions("0.1.19", "0.1.18"), 1);
         assert_eq!(compare_versions("v0.1.17", "0.1.18"), -1);
+    }
+
+    #[test]
+    fn preview_versions_follow_semver_precedence() {
+        assert_eq!(compare_versions("0.2.0-beta.10", "0.2.0-beta.2"), 1);
+        assert_eq!(compare_versions("0.2.0", "0.2.0-beta.10"), 1);
+        assert_eq!(compare_versions("0.2.0-beta.1", "0.2.0"), -1);
+        assert_eq!(compare_versions("0.2.0+build2", "0.2.0+build1"), 0);
+        assert_eq!(compare_versions("not-a-version", "0.2.0"), 0);
+        assert_eq!(compare_versions("0.1", "0.1.0"), 0);
+    }
+
+    #[test]
+    fn importing_the_old_source_preserves_original_config_and_accounts() {
+        let root = std::env::temp_dir().join(format!("wb-next-update-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let legacy = root.join("github_config.json");
+        let next = root.join("github_config_next.json");
+        let accounts = root.join("accounts.json");
+        let original = r#"{"owner":"changexbc","repo":"workbuddy-switch","proxy":" http://localhost:7890 ","token":"fixture"}"#;
+        std::fs::write(&legacy, original).unwrap();
+        std::fs::write(&accounts, "fixture account bytes").unwrap();
+        let loaded = load_github_config_from(&next, &legacy);
+        assert_eq!(
+            loaded,
+            json!({"owner":GITHUB_OWNER,"repo":GITHUB_REPO,"proxy":"http://localhost:7890"})
+        );
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), original);
+        assert_eq!(
+            std::fs::read_to_string(&accounts).unwrap(),
+            "fixture account bytes"
+        );
+        std::fs::write(
+            &next,
+            r#"{"owner":"custom","repo":"private-feed","proxy":""}"#,
+        )
+        .unwrap();
+        assert_eq!(load_github_config_from(&next, &legacy)["owner"], "custom");
+        assert_eq!(std::fs::read_to_string(&legacy).unwrap(), original);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -1,8 +1,9 @@
 {
-  "name": "workbuddy-switch",
-  "version": "0.1.62",
-  "description": "WorkBuddy 账号切换工具：本地 webui（浏览器操作）+ 桌面 App（安装后运行 workbuddy-switch）",
+  "name": "workbuddy-switch-next",
+  "version": "0.2.0-beta.1",
+  "description": "WorkBuddy Switch Next：持续维护的桌面与 CLI 多账号管理工具",
   "bin": {
+    "workbuddy-switch-next": "bin/workbuddy-switch.js",
     "workbuddy-switch": "bin/workbuddy-switch.js"
   },
   "files": [
@@ -10,10 +11,10 @@
     "scripts"
   ],
   "optionalDependencies": {
-    "workbuddy-switch-darwin-arm64": "0.1.62",
-    "workbuddy-switch-darwin-x64": "0.1.62",
-    "workbuddy-switch-win32-x64": "0.1.62",
-    "workbuddy-switch-linux-x64": "0.1.62"
+    "workbuddy-switch-next-darwin-arm64": "0.2.0-beta.1",
+    "workbuddy-switch-next-darwin-x64": "0.2.0-beta.1",
+    "workbuddy-switch-next-win32-x64": "0.2.0-beta.1",
+    "workbuddy-switch-next-linux-x64": "0.2.0-beta.1"
   },
   "scripts": {
     "postinstall": "node scripts/install.js"
@@ -28,5 +29,16 @@
     "switch",
     "cli"
   ],
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coderDJing/workbuddy-switch-next.git"
+  },
+  "homepage": "https://github.com/coderDJing/workbuddy-switch-next",
+  "bugs": {
+    "url": "https://github.com/coderDJing/workbuddy-switch-next/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
 }

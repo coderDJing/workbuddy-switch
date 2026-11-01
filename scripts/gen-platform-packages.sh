@@ -9,13 +9,13 @@ cd "$(dirname "$0")/../npm/platform" || exit 1
 
 gen() {
   local tag="$1" os="$2" cpu="$3" binfile="$4"
-  local dir="workbuddy-switch-$tag"
+  local dir="workbuddy-switch-next-$tag"
   mkdir -p "$dir/bin"
   cat > "$dir/package.json" << JSON
 {
-  "name": "workbuddy-switch-$tag",
+  "name": "workbuddy-switch-next-$tag",
   "version": "$V",
-  "description": "workbuddy-switch platform binary ($tag)",
+  "description": "workbuddy-switch-next platform binary ($tag)",
   "os": ["$os"],
   "cpu": ["$cpu"],
   "files": ["bin"],
