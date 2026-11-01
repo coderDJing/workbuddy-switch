@@ -2,7 +2,6 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[cfg(any(target_os = "windows", target_os = "macos"))]
 use crate::modules::process;
 use crate::modules::process::run_cmd_timeout;
 

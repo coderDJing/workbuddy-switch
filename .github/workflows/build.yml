@@ -35,8 +35,8 @@ jobs:
           import fs from 'node:fs';
           const release = JSON.parse(fs.readFileSync('release-config.json', 'utf8'));
           const platforms = [
-            {name:'mac-arm64',os:'macos-14',target:'aarch64-apple-darwin',platform:'darwin-arm64',bundles:'app',update_os:'macos',arch:'aarch64'},
-            {name:'mac-x64',os:'macos-14',target:'x86_64-apple-darwin',platform:'darwin-x64',bundles:'app',update_os:'macos',arch:'x86_64'},
+            {name:'mac-arm64',os:'macos-15',target:'aarch64-apple-darwin',platform:'darwin-arm64',bundles:'app',update_os:'macos',arch:'aarch64'},
+            {name:'mac-x64',os:'macos-15',target:'x86_64-apple-darwin',platform:'darwin-x64',bundles:'app',update_os:'macos',arch:'x86_64'},
             {name:'win-x64',os:'windows-latest',target:'x86_64-pc-windows-msvc',platform:'win32-x64',bundles:'nsis',update_os:'windows',arch:'x86_64'},
             {name:'linux-x64',os:'ubuntu-latest',target:'x86_64-unknown-linux-gnu',platform:'linux-x64',bundles:'deb,appimage',update_os:'linux',arch:'x86_64'},
           ];
