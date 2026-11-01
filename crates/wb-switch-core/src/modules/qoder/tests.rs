@@ -314,6 +314,8 @@ fn backups_are_pruned_per_target() {
     for i in 0..12 {
         let id = if i % 2 == 0 { &a.id } else { &b.id };
         execute(&sb.store, &sb.roots, &ops, id, OPEN, &no_progress).unwrap();
+        let count = std::fs::read_dir(sb.store.join("backups")).unwrap().count();
+        assert_eq!(count, (i + 1).min(10), "each switch needs its own backup");
     }
     let count = std::fs::read_dir(sb.store.join("backups")).unwrap().count();
     assert_eq!(count, 10);

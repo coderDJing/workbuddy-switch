@@ -39,9 +39,16 @@ fn backup_live(
     target: QoderTarget,
     specs: &[CredentialSpec],
 ) -> Result<PathBuf, String> {
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%3f");
-    let dir = backups_dir(store).join(format!("{}-{stamp}", target_slug(target)));
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建备份目录失败: {e}"))?;
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%9f");
+    // Fast successive switches can share a clock tick; never reuse a backup directory.
+    let dir = backups_dir(store).join(format!(
+        "{}-{stamp}-{}",
+        target_slug(target),
+        uuid::Uuid::new_v4().simple()
+    ));
+    std::fs::create_dir_all(backups_dir(store))
+        .and_then(|_| std::fs::create_dir(&dir))
+        .map_err(|e| format!("创建备份目录失败: {e}"))?;
     let mut items = Vec::new();
     for spec in specs {
         let existed = match std::fs::read(&spec.path) {

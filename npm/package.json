@@ -1,6 +1,6 @@
 {
   "name": "workbuddy-switch-next",
-  "version": "0.2.0-rc.2",
+  "version": "0.2.0-rc.3",
   "description": "WorkBuddy Switch Next：持续维护的桌面与 CLI 多账号管理工具",
   "bin": {
     "workbuddy-switch-next": "bin/workbuddy-switch.js",
@@ -11,10 +11,10 @@
     "scripts"
   ],
   "optionalDependencies": {
-    "workbuddy-switch-next-darwin-arm64": "0.2.0-rc.2",
-    "workbuddy-switch-next-darwin-x64": "0.2.0-rc.2",
-    "workbuddy-switch-next-win32-x64": "0.2.0-rc.2",
-    "workbuddy-switch-next-linux-x64": "0.2.0-rc.2"
+    "workbuddy-switch-next-darwin-arm64": "0.2.0-rc.3",
+    "workbuddy-switch-next-darwin-x64": "0.2.0-rc.3",
+    "workbuddy-switch-next-win32-x64": "0.2.0-rc.3",
+    "workbuddy-switch-next-linux-x64": "0.2.0-rc.3"
   },
   "scripts": {
     "postinstall": "node scripts/install.js"

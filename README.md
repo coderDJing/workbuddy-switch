@@ -16,7 +16,7 @@ WorkBuddy、CodeBuddy IDE、CodeBuddy CLI 与 VS Code CodeBuddy 插件账号切�
 
 ## 快速开始
 
-当前维护预览版为 **0.2.0-rc.2**。安装包以 [Next 预览版发布页](https://github.com/coderDJing/workbuddy-switch-next/releases/tag/preview) 实际产物为准，也可按 [构建说明](docs/cli.md#构建与维护) 从源码构建。
+当前维护预览版为 **0.2.0-rc.3**。安装包以 [Next 预览版发布页](https://github.com/coderDJing/workbuddy-switch-next/releases/tag/preview) 实际产物为准，也可按 [构建说明](docs/cli.md#构建与维护) 从源码构建。
 
 前往 [Next 预览版 Releases](https://github.com/coderDJing/workbuddy-switch-next/releases/tag/preview) 下载对应平台的安装包：
 
