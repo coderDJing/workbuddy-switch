@@ -1,0 +1,10 @@
+{
+  "name": "WorkBuddy Switch Next icon v1",
+  "status": "design-candidate",
+  "tool": "built-in image_gen.imagegen",
+  "reference": "public/icon-transparent.png",
+  "transparent_background": true,
+  "prompt": "Use case: logo-brand. Asset type: a production desktop app icon concept for WorkBuddy Switch Next, one square 1024x1024 icon, NOT a presentation board or mockup. Image 1 is a heritage reference only: it shows the original project's mint green cat, blue accents and gentle face. Create a distinct new design, NOT merely a recolor of the original. The new mark is a complete compact cat HEAD with two pointed ears and a friendly minimal face, no cropped body. Integrate a bold forward double-chevron motif into the right side of the cat's silhouette as a visual idea of Next and switching accounts; it must feel part of the mark, not a tiny attached badge. Large clean mint/aqua cat shape with cobalt blue chevrons, on a deep midnight-indigo rounded-square app tile. Center the mark with generous safe margins. Professional contemporary software identity, precise smooth vector-like geometry, subtle restrained depth, strong contrast, very simple forms, readable when reduced to 32 pixels. The tile has transparent surrounding corners, actual transparent alpha outside the rounded square. No lettering, no words, no initials, no watermark, no little decorative stars, no fine lines, no photorealistic fur, no long cast shadow. Deliver only one finished icon filling the square, with equal outer margins.",
+  "sha256": "6d5d727fb66038bca3fbf8167d3c1942438b37ba46b12aa46565cb30f6137ee5",
+  "integration": "Preview candidate only. Existing application, tray and installer icons have not been replaced."
+}
