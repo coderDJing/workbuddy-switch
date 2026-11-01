@@ -1,0 +1,9 @@
+{
+  "name": "WorkBuddy Switch Next — original cat with N cap",
+  "status": "design-candidate",
+  "tool": "built-in image_gen.imagegen",
+  "reference": "public/icon.png",
+  "prompt": "Use case: precise-object-edit / logo-brand. Edit the PROVIDED ORIGINAL green cat app icon by adding ONLY a hat. The user wants the exact same original cat, now wearing a hat with N on it. Preserve the original cat silhouette, green body, curled tail on the left, two round blue eyes, little blue w-shaped smile, original blue cheek squares, stepped blue right-ear detail, warm ivory background, soft matte texture and original close-up square composition. Do not redesign, reshape, recolor or change the expression of the cat. Add ONE stylish soft cobalt-blue baseball cap resting naturally across the top of its head, tilted very slightly, with the two cat ears visibly sticking out to either side so it remains recognizably this same mascot. Keep the cap compact and nicely proportioned; it must sit on the head and never cover the eyes or ears completely. A short simple visor extends a little toward the viewer-left. On the FRONT CENTER of the cap embroider a single clean WHITE CAPITAL N, exactly the letter N, bold and clearly readable, no other text or logo. The N is a well-proportioned ordinary capital N, not H, M, or a symbol. The cap is matte and softly shaded to match the cat's original tactile material. Cap plus N must be one coherent accessory, not a badge floating above the cat. Use the existing ivory space above its head; keep original image geometry and full-bleed square background. No rounded-square mask, no black corners, no new background, no arrows, no badges, no clothes, no extra objects, no neck accessory. Minimal tasteful app-icon composition. Deliver one finished edited icon only.",
+  "integration": "Hat design preview; current application and installer assets unchanged.",
+  "sha256": "9ffdb28a82360e085e2a97856016e97f6644ada9fbd179cead43c7a38a0dcb83"
+}
