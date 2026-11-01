@@ -10,7 +10,7 @@ use tauri::Emitter;
 use wb_switch_core::modules::{
     account, auth_file, checkin, codebuddy_cli, codebuddy_cn_ide, codebuddy_ide,
     codebuddy_ide_session, codebuddy_ide_session_sync, credit_usage, credits, error_log,
-    export_import, jetbrains, limits, notifications, oauth, process, rate_limit_events,
+    export_import, jetbrains, limits, notifications, oauth, process, qoder, rate_limit_events,
     rate_limit_hook, refresh, rotate, session, session_groups, switch, token_stats, travel, update,
     variant::WbVariant, vscode_ext, vscode_session, vscode_session_sync, webdav_sync,
 };
@@ -349,6 +349,61 @@ pub async fn detect_jetbrains_account() -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(jetbrains::detect_current_account)
         .await
         .map_err(|e| e.to_string())?
+}
+
+fn parse_qoder_target(raw: &str) -> Result<qoder::QoderTarget, String> {
+    qoder::QoderTarget::parse(raw).ok_or_else(|| format!("未知的 Qoder 目标: {raw}"))
+}
+
+/// GET /api/qoder/status —— Qoder CN 桌面端 / CLI 现场状态与账号包列表。
+///
+/// async + spawn_blocking：进程探测会跑 tasklist / ps 子进程。
+#[tauri::command]
+pub async fn get_qoder_status() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(qoder::status)
+        .await
+        .map_err(|e| format!("查询 Qoder 状态失败: {e}"))
+}
+
+/// POST /api/qoder/capture —— 把现场登录态认领为账号包（同一账号会刷新而不是重复保存）。
+#[tauri::command]
+pub async fn capture_qoder_account(target: String, label: Option<String>) -> Result<Value, String> {
+    let target = parse_qoder_target(&target)?;
+    tauri::async_runtime::spawn_blocking(move || qoder::capture(target, label.as_deref()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn rename_qoder_account(bundle_id: String, label: String) -> Result<Value, String> {
+    qoder::rename(&bundle_id, &label)
+}
+
+#[tauri::command(rename_all = "camelCase")]
+pub fn delete_qoder_account(bundle_id: String) -> Result<Value, String> {
+    qoder::delete(&bundle_id)?;
+    Ok(json!({ "ok": true }))
+}
+
+/// POST /api/qoder/switch —— 切换到指定账号包。
+///
+/// `closeRunning` 缺省 true：目标运行中时由后端关闭；`relaunch` 缺省 true：
+/// 切换前桌面端在运行则写完后重新打开（CLI 不重开）。
+#[tauri::command(rename_all = "camelCase")]
+pub async fn switch_qoder_account(
+    bundle_id: String,
+    close_running: Option<bool>,
+    relaunch: Option<bool>,
+) -> Result<Value, String> {
+    let opts = qoder::SwitchOptions {
+        close_running: close_running.unwrap_or(true),
+        relaunch: relaunch.unwrap_or(true),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        qoder::switch_to(&bundle_id, opts, &|step| eprintln!("[qoder] {step}"))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// POST /api/codebuddy-ide/switch —— 注入凭证到 CodeBuddy IDE（国际版），可选复制 / 同步会话。

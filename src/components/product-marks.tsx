@@ -223,3 +223,19 @@ export function StatusDot({ on, className }: { on: boolean; className?: string }
     />
   );
 }
+
+/** Qoder 字标：深色圆角底 + 绿色 Q（与官方配色接近，不复制官方图形）。 */
+export function QoderMark({ size = 32, className }: MarkProps) {
+  return (
+    <span
+      aria-hidden
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center rounded-[22%] border border-white/10 bg-zinc-950 font-semibold text-emerald-400 shadow-sm",
+        className,
+      )}
+      style={{ width: size, height: size, fontSize: Math.round(size * 0.58), lineHeight: 1 }}
+    >
+      Q
+    </span>
+  );
+}

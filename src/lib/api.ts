@@ -48,6 +48,10 @@ import type {
   VscodeExtSwitchResult,
   JetbrainsStatus,
   JetbrainsSwitchResult,
+  QoderBundle,
+  QoderStatus,
+  QoderSwitchResult,
+  QoderTarget,
   VscodeSessionList,
   VscodeSessionRef,
   WbVariant,
@@ -68,7 +72,7 @@ import { screenshotDemoResponse } from "./screenshot-demo";
  */
 
 const DEMO_READ_COMMANDS = new Set([
-  "get_status", "get_accounts", "get_codebuddy_cli_status", "get_codebuddy_cn_ide_status", "get_codebuddy_ide_status", "get_vscode_ext_status", "get_jetbrains_status", "list_vscode_sessions", "list_codebuddy_ide_sessions", "list_codebuddy_intl_ide_sessions", "vscode_session_links_preview", "codebuddy_ide_session_links_preview", "codebuddy_intl_ide_session_links_preview", "list_account_sessions", "session_links_preview_cross", "list_session_groups", "get_session_group", "preview_session_group_pair", "get_checkin_status",
+  "get_status", "get_accounts", "get_codebuddy_cli_status", "get_codebuddy_cn_ide_status", "get_codebuddy_ide_status", "get_vscode_ext_status", "get_jetbrains_status", "get_qoder_status", "list_vscode_sessions", "list_codebuddy_ide_sessions", "list_codebuddy_intl_ide_sessions", "vscode_session_links_preview", "codebuddy_ide_session_links_preview", "codebuddy_intl_ide_session_links_preview", "list_account_sessions", "session_links_preview_cross", "list_session_groups", "get_session_group", "preview_session_group_pair", "get_checkin_status",
   "get_credit_expiry", "get_credit_statistics", "get_auto_checkin_config",
   "get_token_statistics",
   "get_checkin_logs", "get_auto_rotate_config", "rotate_status", "get_rotate_logs",
@@ -128,6 +132,11 @@ const ROUTES: Record<string, Route> = {
   get_jetbrains_status: { method: "GET", path: "/api/jetbrains/status" },
   switch_jetbrains_account: { method: "POST", path: "/api/jetbrains/switch" },
   detect_jetbrains_account: { method: "POST", path: "/api/jetbrains/detect" },
+  get_qoder_status: { method: "GET", path: "/api/qoder/status" },
+  capture_qoder_account: { method: "POST", path: "/api/qoder/capture" },
+  rename_qoder_account: { method: "POST", path: "/api/qoder/rename" },
+  delete_qoder_account: { method: "POST", path: "/api/qoder/delete" },
+  switch_qoder_account: { method: "POST", path: "/api/qoder/switch" },
   list_vscode_sessions: { method: "GET", path: "/api/vscode-ext/sessions" },
   switch_vscode_ext_account: { method: "POST", path: "/api/vscode-ext/switch" },
   vscode_session_links_preview: { method: "POST", path: "/api/vscode-ext/session-links" },
@@ -447,6 +456,35 @@ export function detectJetbrainsAccount(): Promise<{
   message?: string;
 }> {
   return call("detect_jetbrains_account");
+}
+
+export function getQoderStatus(): Promise<QoderStatus> {
+  return call("get_qoder_status");
+}
+
+/** 把 Qoder 现场登录态认领为账号包；同一账号再次认领会刷新而不是重复保存。 */
+export function captureQoderAccount(target: QoderTarget, label?: string): Promise<QoderBundle> {
+  return call("capture_qoder_account", { target, label });
+}
+
+export function renameQoderAccount(bundleId: string, label: string): Promise<QoderBundle> {
+  return call("rename_qoder_account", { bundleId, label });
+}
+
+export function deleteQoderAccount(bundleId: string): Promise<{ ok: boolean }> {
+  return call("delete_qoder_account", { bundleId });
+}
+
+/**
+ * 切换 Qoder 账号包。`closeRunning` 默认 true：目标运行中时由后端关闭；
+ * `relaunch` 默认 true：桌面端切换前在运行则写完后重新打开（CLI 不重开）。
+ */
+export function switchQoderAccount(
+  bundleId: string,
+  closeRunning = true,
+  relaunch = true,
+): Promise<QoderSwitchResult> {
+  return call("switch_qoder_account", { bundleId, closeRunning, relaunch });
 }
 
 export function getCodebuddyIdeStatus(): Promise<CodeBuddyCnIdeStatus> {

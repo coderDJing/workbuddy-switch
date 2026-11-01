@@ -1137,3 +1137,49 @@ export interface VscodeSessionList {
    */
   dataRoot?: string | null;
 }
+
+/** Qoder 切换目标：桌面端（Qoder CN）与 CLI（qoderclicn）登录态相互独立。 */
+export type QoderTarget = "desktop" | "cli";
+
+/** Qoder 账号包：整组加密凭据文件的本机副本（只含元数据，不含凭据内容）。 */
+export interface QoderBundle {
+  id: string;
+  target: QoderTarget;
+  label: string;
+  /** 认领时桌面端明文回显里的账号名。 */
+  echoName?: string | null;
+  capturedAt: number;
+  lastSwitchedAt?: number | null;
+  files: { name: string; sha256: string; size: number }[];
+}
+
+export interface QoderTargetStatus {
+  target: QoderTarget;
+  label: string;
+  installed: boolean;
+  loggedIn: boolean;
+  running: boolean;
+  /** 现场登录态对应的账号包 id；现场未认领时为 null。 */
+  currentId: string | null;
+  currentLabel: string | null;
+  echoName: string | null;
+}
+
+export interface QoderStatus {
+  desktop: QoderTargetStatus;
+  cli: QoderTargetStatus;
+  bundles: QoderBundle[];
+}
+
+export interface QoderSwitchResult {
+  ok: boolean;
+  target: QoderTarget;
+  accountId: string;
+  label?: string;
+  unchanged: boolean;
+  message?: string;
+  closed?: boolean;
+  relaunched?: boolean;
+  autoSavedId?: string | null;
+  warnings?: string[];
+}

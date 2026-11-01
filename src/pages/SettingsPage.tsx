@@ -63,7 +63,7 @@ import { accountVariant, variantSupportsCheckin, variantSupportsTravel, variantU
 import { UpdateInstallDialog } from "@/components/update-install-dialog";
 import { DemoAction } from "@/components/demo-action";
 import { WebdavRestoreDialog } from "@/components/webdav-restore-dialog";
-import { CodeBuddyAiIdeMark, CodeBuddyCnIdeMark, CodeBuddyMark, JetbrainsMark, VscodeExtMark, WorkBuddyAiMark, WorkBuddyMark } from "@/components/product-marks";
+import { CodeBuddyAiIdeMark, CodeBuddyCnIdeMark, CodeBuddyMark, JetbrainsMark, QoderMark, VscodeExtMark, WorkBuddyAiMark, WorkBuddyMark } from "@/components/product-marks";
 import { useAccountsStore } from "@/stores/accounts";
 
 interface SettingsGroupProps {
@@ -2185,6 +2185,7 @@ function SupportedToolsCard() {
     codebuddyCli: (size) => <CodeBuddyMark size={size} />,
     vscodeExt: (size) => <VscodeExtMark size={size} />,
     jetbrains: (size) => <JetbrainsMark size={size} />,
+    qoder: (size) => <QoderMark size={size} />,
   };
 
   return (

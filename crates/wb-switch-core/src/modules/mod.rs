@@ -19,6 +19,7 @@ pub mod notifications;
 pub mod oauth;
 pub mod official_usage;
 pub mod process;
+pub mod qoder;
 pub mod rate_limit_events;
 pub mod rate_limit_hook;
 pub mod refresh;

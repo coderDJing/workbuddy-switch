@@ -3,7 +3,7 @@ import type {
   AccountMeta, AppStatus, AutoRotateConfig, CheckinConfig, CheckinLog,
   CodeBuddyCliStatus, CodeBuddyCliSwitchResult, CodeBuddyCnIdeStatus, CreditExpiry, CreditOfficialUsageModel, CreditStatistics,
   DisplayField,
-  GithubConfig, RateLimitHookStatus, RateLimitsPayload, RotateLog, RotateStatus, TokenStatistics, TokenStatsAccount, TokenStatsGroup, TokenStatsRequestRow, TokenStatsSource, TokenStatsTotals,
+  GithubConfig, QoderStatus, RateLimitHookStatus, RateLimitsPayload, RotateLog, RotateStatus, TokenStatistics, TokenStatsAccount, TokenStatsGroup, TokenStatsRequestRow, TokenStatsSource, TokenStatsTotals,
   Session, SessionLinkPreviewGroup, SessionLinksPreview, SessionSyncVerdict, SessionGroupClient, SessionGroupSummary, SessionGroupDetail, SessionGroupList, SessionGroupPairPreview, SessionMemberVersionStatus, TravelConfig, TravelStatus, VscodeExtStatus, VscodeSessionList,
 } from "./types";
 import { displayName } from "./account-display";
@@ -831,6 +831,7 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
       return { ...appStatus, variant };
     }
     case "get_accounts": return { accounts: demoAccounts };
+    case "get_qoder_status": return demoQoderStatus();
     // 会话管理页：按账号返回演示会话；国际版账号给一套不同 cwd，混排时可见档位差异。
     case "list_account_sessions": {
       const account = demoAccounts.find((item) => item.id === args?.accountId) ?? demoAccounts[0];
@@ -1006,4 +1007,19 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "switch_progress": return { running: false, progress: null };
     default: throw new Error(`演示模式缺少只读数据: ${command}`);
   }
+}
+
+/** Qoder 页演示：桌面端两个账号包（一个使用中），CLI 一个。全部为虚构数据。 */
+function demoQoderStatus(): QoderStatus {
+  const file = (name: string) => ({ name, sha256: "0".repeat(64), size: 512 });
+  const bundles: QoderStatus["bundles"] = [
+    { id: "demo-qoder-desktop-a", target: "desktop", label: "工作号", echoName: "演示用户 A", capturedAt: demoNow - 6 * 86_400_000, lastSwitchedAt: demoNow - 2 * 3_600_000, files: [file("auth.v1.dat")] },
+    { id: "demo-qoder-desktop-b", target: "desktop", label: "备用号", echoName: "演示用户 B", capturedAt: demoNow - 3 * 86_400_000, lastSwitchedAt: null, files: [file("auth.v1.dat")] },
+    { id: "demo-qoder-cli-a", target: "cli", label: "CLI 主账号", echoName: null, capturedAt: demoNow - 86_400_000, lastSwitchedAt: null, files: [file("user")] },
+  ];
+  return {
+    desktop: { target: "desktop", label: "Qoder CN", installed: true, loggedIn: true, running: true, currentId: "demo-qoder-desktop-a", currentLabel: "工作号", echoName: "演示用户 A" },
+    cli: { target: "cli", label: "Qoder CN CLI", installed: true, loggedIn: true, running: false, currentId: "demo-qoder-cli-a", currentLabel: "CLI 主账号", echoName: null },
+    bundles,
+  };
 }

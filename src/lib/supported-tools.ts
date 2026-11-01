@@ -6,12 +6,12 @@ import { useEffect, useState } from "react";
  * 语义（与设置页文案一致）：
  * - 关闭某工具 = 该工具的入口（账号卡片按钮、页顶状态徽标）不渲染，相关状态
  *   轮询也跳过；**不影响账号库与其它工具**，重新打开即恢复。
- * - 默认值：现有的四个端默认开启；JetBrains 端默认关闭（作者要求的灰度策略）。
+ * - 默认值：现有的四个端默认开启；JetBrains 与 Qoder 端默认关闭（新增端先灰度）。
  *
  * 持久化在 localStorage（与 `wb-switch.compact` / `wb-switch.theme` 同风格），
  * 键名 `wb-switch.tools.<id>`，值 `"1"` / `"0"`；缺省时取 `defaultEnabled`。
  */
-export type ToolId = "workbuddy" | "codebuddyIde" | "codebuddyCli" | "vscodeExt" | "jetbrains";
+export type ToolId = "workbuddy" | "codebuddyIde" | "codebuddyCli" | "vscodeExt" | "jetbrains" | "qoder";
 
 export interface ToolDef {
   id: ToolId;
@@ -53,6 +53,13 @@ export const SUPPORTED_TOOLS: ToolDef[] = [
     label: "JetBrains IDE 插件（全家桶 / Android Studio）",
     description:
       "JetBrains 全家桶（IDEA / PyCharm / WebStorm / GoLand / CLion / Rider 等）与 Android Studio 内 CodeBuddy 插件账号切换",
+    defaultEnabled: false,
+  },
+  {
+    id: "qoder",
+    label: "Qoder CN / Qoder CN CLI",
+    description:
+      "Qoder CN 桌面端与 CLI 账号切换（独立账号包，不与 WorkBuddy 账号库共用；侧栏出现「Qoder」页）",
     defaultEnabled: false,
   },
 ];

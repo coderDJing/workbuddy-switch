@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use wb_switch_core::modules::{
     account, auth_file, checkin, codebuddy_cli, codebuddy_cn_ide, codebuddy_ide,
     codebuddy_ide_session, codebuddy_ide_session_sync, config, credit_usage, credits,
-    export_import, jetbrains, limits, notifications, oauth, process, rate_limit_events,
+    export_import, jetbrains, limits, notifications, oauth, process, qoder, rate_limit_events,
     rate_limit_hook, refresh, rotate, session, session_groups, switch, token_stats, travel, update,
     variant::WbVariant, vscode_ext, vscode_session, vscode_session_sync, webdav_sync,
 };
@@ -101,6 +101,11 @@ pub fn router() -> Router {
         .route("/api/jetbrains/status", get(api_jetbrains_status))
         .route("/api/jetbrains/switch", post(api_jetbrains_switch))
         .route("/api/jetbrains/detect", post(api_jetbrains_detect))
+        .route("/api/qoder/status", get(api_qoder_status))
+        .route("/api/qoder/capture", post(api_qoder_capture))
+        .route("/api/qoder/rename", post(api_qoder_rename))
+        .route("/api/qoder/delete", post(api_qoder_delete))
+        .route("/api/qoder/switch", post(api_qoder_switch))
         .route("/api/vscode-ext/status", get(api_vscode_ext_status))
         .route("/api/vscode-ext/sessions", get(api_vscode_ext_sessions))
         .route("/api/vscode-ext/switch", post(api_vscode_ext_switch))
@@ -673,6 +678,60 @@ async fn api_jetbrains_detect() -> Response {
     match jetbrains::detect_current_account() {
         Ok(v) => json_ok(v),
         Err(e) => json_err(e, StatusCode::BAD_REQUEST),
+    }
+}
+
+fn body_str<'a>(body: &'a Value, keys: &[&str]) -> &'a str {
+    keys.iter()
+        .find_map(|k| body.get(*k).and_then(|v| v.as_str()))
+        .unwrap_or("")
+}
+
+async fn api_qoder_status() -> Response {
+    json_ok(qoder::status())
+}
+
+async fn api_qoder_capture(Json(body): Json<Value>) -> Response {
+    let Some(target) = qoder::QoderTarget::parse(body_str(&body, &["target"])) else {
+        return json_err("未知的 Qoder 目标".to_string(), StatusCode::BAD_REQUEST);
+    };
+    let label = body.get("label").and_then(|v| v.as_str());
+    match qoder::capture(target, label) {
+        Ok(v) => json_ok(v),
+        Err(e) => json_err(e, StatusCode::BAD_REQUEST),
+    }
+}
+
+async fn api_qoder_rename(Json(body): Json<Value>) -> Response {
+    let id = body_str(&body, &["bundleId", "bundle_id"]);
+    match qoder::rename(id, body_str(&body, &["label"])) {
+        Ok(v) => json_ok(v),
+        Err(e) => json_err(e, StatusCode::BAD_REQUEST),
+    }
+}
+
+async fn api_qoder_delete(Json(body): Json<Value>) -> Response {
+    match qoder::delete(body_str(&body, &["bundleId", "bundle_id"])) {
+        Ok(()) => json_ok(json!({ "ok": true })),
+        Err(e) => json_err(e, StatusCode::BAD_REQUEST),
+    }
+}
+
+async fn api_qoder_switch(Json(body): Json<Value>) -> Response {
+    let flag = |key: &str| body.get(key).and_then(|v| v.as_bool()).unwrap_or(true);
+    let opts = qoder::SwitchOptions {
+        close_running: flag("closeRunning"),
+        relaunch: flag("relaunch"),
+    };
+    let id = body_str(&body, &["bundleId", "bundle_id"]).to_string();
+    let result = tokio::task::spawn_blocking(move || {
+        qoder::switch_to(&id, opts, &|step| eprintln!("[qoder] {step}"))
+    })
+    .await;
+    match result {
+        Ok(Ok(v)) => json_ok(v),
+        Ok(Err(e)) => json_err(e, StatusCode::BAD_REQUEST),
+        Err(e) => json_err(e.to_string(), StatusCode::INTERNAL_SERVER_ERROR),
     }
 }
 

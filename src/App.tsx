@@ -10,7 +10,8 @@ import SessionsPage from "@/pages/SessionsPage";
 import CreditStatsPage from "@/pages/CreditStatsPage";
 import TokenStatsPage from "@/pages/TokenStatsPage";
 import SettingsPage from "@/pages/SettingsPage";
-import { StatusDot, AppIconMark } from "@/components/product-marks";
+import QoderPage from "@/pages/QoderPage";
+import { StatusDot, AppIconMark, QoderMark } from "@/components/product-marks";
 import { CompanionDemoDialog } from "@/components/companion-demo-dialog";
 import { UpdateInstallDialog } from "@/components/update-install-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import companionTrayIcon from "@/assets/agent-companion-tray.png";
 import { DEMO_UNAVAILABLE_MESSAGE, demoModeEnabled, pagesDemoHostingEnabled } from "@/lib/demo-mode";
 import { useSessionsNavEnabled } from "@/lib/nav-prefs";
+import { useSupportedTools } from "@/lib/supported-tools";
 import { changeCompanionEnabled, useCompanionEnabled } from "@/lib/use-companion-enabled";
 import { useCreditAutoRefresh } from "@/lib/use-credit-auto-refresh";
 import { useRotateDeferredNotice } from "@/lib/use-rotate-deferred-notice";
@@ -223,6 +225,7 @@ function Layout() {
   const hasUnifiedTitleBar =
     api.isDesktop() && typeof navigator !== "undefined" && navigator.userAgent.includes("Macintosh");
   const sessionsNavEnabled = useSessionsNavEnabled();
+  const qoderEnabled = useSupportedTools().qoder;
   useCreditAutoRefresh();
   useWorkbuddyStatusRefresh();
   useRotateDeferredNotice();
@@ -308,6 +311,22 @@ function Layout() {
             <Sparkles className="size-4" />
             积分统计
           </NavLink>
+          {qoderEnabled && (
+            <NavLink
+              to="/qoder"
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
+                  isActive
+                    ? "bg-foreground/[0.06] font-medium text-foreground"
+                    : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
+                )
+              }
+            >
+              <QoderMark size={16} />
+              Qoder
+            </NavLink>
+          )}
           <NavLink
             to="/settings"
             className={({ isActive }) =>
@@ -349,6 +368,7 @@ export default function App() {
             <Route path="/sessions" element={<SessionsPage />} />
             <Route path="/credit-stats" element={<CreditStatsPage />} />
             <Route path="/token-stats" element={<TokenStatsPage />} />
+            <Route path="/qoder" element={<QoderPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
