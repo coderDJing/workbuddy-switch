@@ -1,10 +1,17 @@
 {
   "name": "WorkBuddy Switch Next — soft beret direction",
-  "status": "design-candidate",
+  "status": "approved",
   "tool": "built-in image_gen.imagegen",
   "reference": "public/icon.png",
   "prompt": "Art-directed edit for the WorkBuddy Switch Next app icon. Use the supplied ORIGINAL CAT as the identity and composition anchor. Keep this exact friendly green cat: its original asymmetrical ears, round cobalt eyes, tiny w smile, blue pixel markings, curled tail, soft mint material, and warm ivory full-bleed square background. Give it ONE beautifully designed, compact cobalt-blue SOFT BERET with a clear white capital N on the front. A beret, not a baseball cap: no projecting visor. The soft beret is a gently sloping oval cushion, casually tilted toward viewer-left, with a very narrow lower band sitting naturally on the forehead BETWEEN the ears. It should occupy about one third of the image width, small enough for both original ears and the whole face to read clearly. Place it in the upper center, lightly nestled on the head, with one side overlapping an ear root subtly. The ears stay outside the beret; no ear holes, exposed rings, straps or helmet-like wrapping. The white N is a clean bold, flat stitched monogram, centered on the visible front of the beret and following the fabric angle. No raised chunky lettering. Make the hat feel like a charming thoughtful accessory the original mascot has always owned. Match the original cat's soft matte sculptural shading; use large smooth surfaces and only one or two graceful folds, no noisy fabric weave, no excessive seams, no heavy shadows. Slight gentle contact shadow under the band. Refined indie software brand aesthetic: calm, warm, playful, exceptionally clear at small icon size. Maintain the original cat's size, pose, face and body. The new composition should feel balanced and deliberate, not busy. No redesign of the cat, no added text besides N, no arrows, no badges, no border, no rounded-square mask, no black corners. One finished square icon, no presentation board.",
   "designNotes": "Compact tilted blue beret, clear white N, simple smooth surfaces; preserve the original mascot identity and avoid complex ear-hole construction.",
-  "integration": "Design preview; application and installer icons have not been replaced.",
-  "sha256": "da5587ff9a5cca2f9c818523f816cdabaa9bd3169893c9a90e929ebf94c0ef48"
+  "integration": "Active app artwork: public/icon.png, public/icon-transparent.png, desktop PNG/ICO/ICNS, and native tray variants. Export with node scripts/gen-next-icons.mjs.",
+  "sha256": "da5587ff9a5cca2f9c818523f816cdabaa9bd3169893c9a90e929ebf94c0ef48",
+  "approvedDate": "2026-11-01",
+  "transparentDerivative": {
+    "path": "docs/assets/branding/workbuddy-switch-next-icon-beret-transparent.png",
+    "tool": "built-in image_gen.imagegen",
+    "prompt": "Background extraction only. The user has APPROVED this exact WorkBuddy Switch Next mascot design. Remove only the warm ivory BACKGROUND outside the green cat and blue N beret, producing true transparent alpha. Preserve the cat silhouette, all colors, soft shading, face, tail, cap tilt, shape and white N exactly. The white N ON THE HAT must remain opaque and untouched; do not erase it as background. Preserve the ivory opening inside the curled tail as transparent background. Preserve original square canvas dimensions, framing, scale and position. No redesign, no added objects, no changed edges, no new shadow. Clean antialiased cutout, no ivory halo, no stray speckles. Actual transparency outside the approved mascot only.",
+    "sha256": "3bfffe539902bc91f746d666c0480e140c71b3d9029e14373a41cb33fcfe3a95"
+  }
 }

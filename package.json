@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "icons:generate": "node scripts/gen-next-icons.mjs",
     "dev:desktop": "node scripts/prepare-agent-companion.mjs dev && vite",
     "dev:demo": "node scripts/prepare-companion-demo.mjs dev && VITE_DEMO_MODE=1 vite",
     "dev:screenshot": "node scripts/prepare-companion-demo.mjs dev && VITE_DEMO_MODE=1 vite",

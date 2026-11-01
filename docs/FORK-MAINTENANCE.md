@@ -8,6 +8,12 @@
 
 当前仓库地址仍是 `coderDJing/workbuddy-switch`。本次先统一展示名称；安装包 productName、应用 identifier、CLI 命令、npm 包名及更新源随独立发布一起迁移，避免名称与打包脚本或用户数据路径脱节。尚未发布独立 Next 安装包或 npm 包。
 
+### 正式图标
+
+2026-11-01 用户选定蓝色贝雷帽、白色 N 的原猫版本。设计母图为 [定稿 PNG](assets/branding/workbuddy-switch-next-icon-beret-v1.png)，生成提示词与批准状态见 [设计记录](assets/branding/workbuddy-switch-next-icon-beret-v1.json)。界面、favicon、桌面图标及托盘已经使用该版本；深浅色与小尺寸效果见 [尺寸检查](assets/branding/workbuddy-switch-next-icon-sizes.png)。
+
+运行 `npm run icons:generate` 可从固定母图及透明衍生图重新导出全部图标。导出器复用本地 Tauri CLI，生成桌面 PNG/ICO/ICNS、仓库已有移动端资源，以及 32/36 px 原生托盘 RGBA；Windows 图标单独烘焙圆角。单色托盘以镂空保留表情与帽子上的 N。
+
 ## 产品维护范围
 
 用户于 2026-11-01 明确要求按完整产品接续维护，实际同时使用 GUI 与 CLI。维护范围覆盖桌面 App、npm/webui、一次性 CLI，以及原产品支持的国内/国际版客户端接入；账号管理、认证与切换、积分和 Token 统计、会话复制/关联/同步、签到与旅行、悬浮窗及升级发布均纳入维护。
