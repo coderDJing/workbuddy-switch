@@ -1,0 +1,9 @@
+{
+  "name": "WorkBuddy Switch Next icon v3",
+  "status": "design-candidate",
+  "tool": "built-in image_gen.imagegen",
+  "reference": "public/icon.png",
+  "prompt": "Precise small edit of this original app icon. Preserve the entire original image faithfully: same green cat silhouette, same cropped body and curled tail, same ears and stepped blue ear patch, same blue eyes and tiny smile, same warm ivory background, original square full-bleed framing, same texture and lighting. Change only the two small cobalt-blue square marks on the cat's RIGHT CHEEK into one tiny geometric PIXEL LETTER N, using the same cobalt blue and approximately the same small footprint in the same cheek location. The N should be a simple legible three-stroke pixel monogram, a subtle cheek marking representing Next, not a badge and not large text. Do not change anything else. No rounded-square mask, no border, no black or transparent corners: the ivory background must fill every corner of the square canvas exactly as in the reference. No arrows, no additional symbols, no other letters. Result should look at first glance identical to the original, with the small cheek monogram as the only designed difference.",
+  "integration": "Original-icon variation; app and installer icons remain unchanged pending selection.",
+  "sha256": "0af76898e914742db44c6d77a39c3deb3fd8bcbe79473bd2e3ae9aaff7786fb2"
+}
