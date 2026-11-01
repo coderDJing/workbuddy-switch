@@ -5,7 +5,7 @@
   "patches": [
     {
       "path": "patches/agent-companion/host-compatibility.patch",
-      "sha256": "91fe1cbdc7559794f8e1d00a51cd3886451d08c3c3409526526ac54aeb70c8dc"
+      "sha256": "4c50a9e55534ab81518c0bea4cf6de4c92561102df852bbce36523f42f3f3228"
     }
   ]
 }

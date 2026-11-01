@@ -3375,7 +3375,7 @@ index 4b5b9a1..ea61291 100644
      let rail = WebviewWindowBuilder::new(
          app,
 diff --git a/crates/agent-studio-desktop/src/session.rs b/crates/agent-studio-desktop/src/session.rs
-index ec221e8..5863424 100644
+index ec221e8..2c6d09e 100644
 --- a/crates/agent-studio-desktop/src/session.rs
 +++ b/crates/agent-studio-desktop/src/session.rs
 @@ -1,6 +1,7 @@
@@ -3402,7 +3402,7 @@ index ec221e8..5863424 100644
          "com.tencent.codebuddycn"
      }
  }
-+#[cfg(any(target_os = "macos", test))]
++#[cfg(target_os = "macos")]
  fn app_for_scheme(scheme: &str) -> Option<(&'static str, &'static str)> {
      Some(match scheme {
          "workbuddy-ai" => ("WorkBuddy AI.app", "com.workbuddy.workbuddy-ai"),
