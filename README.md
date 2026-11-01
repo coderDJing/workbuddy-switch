@@ -75,9 +75,9 @@ xattr -rd com.apple.quarantine "/Applications/WorkBuddy Switch Next.app"
 
 ### Qoder CN / Qoder CN CLI
 
-侧栏顶部按厂商切换「腾讯系 / Qoder」，两者平级：腾讯系各端（WorkBuddy / CodeBuddy IDE / CodeBuddy CLI / VS Code / JetBrains 插件）共用一个账号库，Qoder 端独立管理「账号包」，与腾讯系账号库互不相通。关联会话、Token 统计、积分统计只有腾讯系数据源，选 Qoder 时侧栏只显示「账号管理」与「设置」。关闭设置 →「支持工具」里的 Qoder 后，厂商切换随之隐藏。
+最左侧平台栏切换「WorkBuddy / CodeBuddy」与「Qoder」，各平台平级、账号库互不相通：WorkBuddy / CodeBuddy 各端（WorkBuddy / CodeBuddy IDE / CodeBuddy CLI / VS Code / JetBrains 插件）共用一个账号库，Qoder 独立管理「账号包」。每个平台只显示它支持的页面：关联会话、Token 统计、积分统计目前只有 WorkBuddy / CodeBuddy 有数据源，Qoder 只有「账号管理」；平台栏底部是全局设置（外观、支持工具、悬浮窗、通知、WebDAV、更新），自动签到、CLI 自动轮换、限额监听与权限检测在 WorkBuddy / CodeBuddy 的「平台设置」里。关闭设置 →「支持工具」里的 Qoder 后，平台栏不再显示 Qoder。
 
-- **认领**：在 Qoder CN（或 CLI）中登录后，在侧栏切到 Qoder，于「账号管理」点「认领 Qoder CN 登录」（或「认领 CLI 登录」），工具把整组加密凭据文件原样保存到 `~/.wb-switch/qoder/`，不解密任何内容。同一账号再次认领会刷新原账号包。
+- **认领**：在 Qoder CN（或 CLI）中登录后，在平台栏切到 Qoder，于「账号管理」点「认领 Qoder CN 登录」（或「认领 CLI 登录」），工具把整组加密凭据文件原样保存到 `~/.wb-switch/qoder/`，不解密任何内容。同一账号再次认领会刷新原账号包。
 - **切换**：先把现场凭据整组备份（各端保留最近 10 份），再写入目标账号包，写入后逐份比对 sha256，任何一步失败整组回滚。现场登录态还没认领时会先自动保存，避免切走后回不来。
 - **进程**：Qoder CN 运行中会先关闭、写入后重新打开；Qoder CN CLI 运行中会被关闭，不会自动重开。从 Qoder 内置终端启动本工具时拒绝关闭 Qoder，需先手动退出。
 - **限制**：账号包受 DPAPI（Windows）/ 钥匙串（macOS）绑定，只能在本机当前系统用户下使用，不参与 WebDAV 同步，也不能导出到其它设备；Qoder 会话历史不按账号隔离，切换后不同账号可见同一份本地历史；目前仅支持国内版。
@@ -114,7 +114,7 @@ CodeBuddy CLI 切换时会先关闭正在运行的 CLI，当前会话会中断�
 4. **切换各客户端账号**：CodeBuddy CLI、CodeBuddy IDE、VS Code CodeBuddy 插件均可在账号卡片一键切换；CodeBuddy IDE 与 VS Code 插件支持在弹窗中勾选复制当前账号的会话。CodeBuddy IDE 首次使用前需先手动打开并登录一次
 5. **管理关联会话**：侧栏「关联会话」按客户端查看同一会话在各账号中的副本状态，把新增内容增量同步到目标账号、处理内容分歧；「新增关联会话」可把会话复制到新账号并建立关联
 6. **开关各端入口**：设置 →「支持工具」可按客户端逐个开启 / 关闭入口；关闭后该端在账号页隐藏、不再轮询状态，不影响账号库。JetBrains 端默认关闭
-7. **自动轮换**：设置 → CodeBuddy CLI 自动轮换，开启后按积分紧迫程度自动设置默认账号
+7. **自动轮换**：WorkBuddy / CodeBuddy →「平台设置」→ CodeBuddy CLI 自动轮换，开启后按积分紧迫程度自动设置默认账号
 8. **更新**：应用会自动检查 Next 自有签名的更新源，预览版通过 preview 入口接收更新；发现新版本后可在左下角直接升级，也可从设置页打开 Release 页面手动下载
 9. **WebDAV 备份 / 跨设备同步**：设置 →「WebDAV 备份 / 跨设备同步」，配置私有 WebDAV 服务器（地址 / 用户名 / 口令 / 远端目录）与备份加密密码；「立即备份」把整库账号与功能配置加密上传，「从云端恢复」可勾选账号并可选同时写回配置，「同步」拉取合并后回推整库（同 UID 和客户端类型匹配，旧凭据不会覆盖新凭据，冲突提示；ETag 防止并发覆盖）
 
@@ -154,7 +154,7 @@ Token 统计页按来源展示 Token 总览与趋势、构成占比、活跃热�
 
 1. 首次切换报「无权限」时，点「打开系统设置」
 2. 优先在 **App 管理** 里打开 WorkBuddy Switch Next 开关；若没有，则去 **完全磁盘访问** 把 WorkBuddy Switch Next 拖进带箭头的框
-3. 授权后重启本应用生效；设置页「权限检测」可随时验证
+3. 授权后重启本应用生效；WorkBuddy / CodeBuddy →「平台设置」→「权限检测」可随时验证
 
 ## npm / webui 版本
 

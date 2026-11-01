@@ -2409,30 +2409,49 @@ function RateLimitCard() {
 }
 
 /** 设置页：演示模式不渲染自动签到；Agent Companion 只在桌面正式版显示。 */
-export default function SettingsPage() {
+function SettingsShell({ title, description, children }: { title: string; description: string; children: ReactNode }) {
   return (
     <div className="mx-auto min-w-0 w-full max-w-3xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="mb-10 sm:mb-12">
-        <h1 className="text-2xl font-semibold tracking-tight">设置</h1>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          {api.isDemoMode() ? "限额监听、权限检测与自动更新配置。" : "自动签到、限额监听、权限检测与自动更新配置。"}
-        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
       </header>
-
-      <div className="min-w-0 space-y-12">
-        <AppearanceCard />
-        <SupportedToolsCard />
-        <PermissionCheckCard />
-        {api.isDemoMode() ? null : <AutoCheckinCard />}
-        <AutoRotateCard />
-        <RateLimitCard />
-        {api.isDesktop() && !api.isDemoMode() ? <CompanionCard /> : null}
-        {api.isDesktop() || api.isDemoMode() ? <StartupCard /> : null}
-        <NotificationHistoryCard />
-        <ErrorLogCard />
-        <WebdavSyncCard />
-        {api.isWebui() && !api.isDemoMode() ? null : <UpdateCard />}
-      </div>
+      <div className="min-w-0 space-y-12">{children}</div>
     </div>
+  );
+}
+
+/** 全局设置（平台栏底部）：与具体平台无关的应用级配置。 */
+export default function SettingsPage() {
+  return (
+    <SettingsShell title="设置" description="外观、启用的平台与客户端、悬浮窗、备份同步与自动更新等应用级配置。">
+      <AppearanceCard />
+      <SupportedToolsCard />
+      {api.isDesktop() && !api.isDemoMode() ? <CompanionCard /> : null}
+      {api.isDesktop() || api.isDemoMode() ? <StartupCard /> : null}
+      <NotificationHistoryCard />
+      <ErrorLogCard />
+      <WebdavSyncCard />
+      {api.isWebui() && !api.isDemoMode() ? null : <UpdateCard />}
+    </SettingsShell>
+  );
+}
+
+/** WorkBuddy / CodeBuddy 平台设置：签到、轮换、限额与认证目录权限都只作用于该平台。 */
+export function CodebuddySettingsPage() {
+  return (
+    <SettingsShell
+      title="平台设置"
+      description={
+        api.isDemoMode()
+          ? "WorkBuddy / CodeBuddy 的权限检测、CLI 自动轮换与限额监听。"
+          : "WorkBuddy / CodeBuddy 的权限检测、自动签到、CLI 自动轮换与限额监听。"
+      }
+    >
+      <PermissionCheckCard />
+      {api.isDemoMode() ? null : <AutoCheckinCard />}
+      <AutoRotateCard />
+      <RateLimitCard />
+    </SettingsShell>
   );
 }

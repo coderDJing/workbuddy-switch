@@ -59,7 +59,7 @@ export const SUPPORTED_TOOLS: ToolDef[] = [
     id: "qoder",
     label: "Qoder CN / Qoder CN CLI",
     description:
-      "Qoder CN 桌面端与 CLI 账号切换；侧栏顶部出现「腾讯系 / Qoder」厂商切换（Qoder 账号独立保存，不与腾讯系账号库共用）",
+      "Qoder CN 桌面端与 CLI 账号切换；最左侧平台栏出现 Qoder（Qoder 账号独立保存，不与 WorkBuddy / CodeBuddy 账号库共用）",
     defaultEnabled: true,
   },
 ];

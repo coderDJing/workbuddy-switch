@@ -1,7 +1,7 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { BrowserRouter, HashRouter, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
-import { ArrowUp, Link2, Loader2, MessagesSquare, Play, Settings, Sparkles, User } from "lucide-react";
+import { BrowserRouter, HashRouter, Navigate, Outlet, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { ArrowUp, Loader2, Play, Settings } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import * as api from "@/lib/api";
@@ -9,12 +9,11 @@ import AccountsPage from "@/pages/AccountsPage";
 import SessionsPage from "@/pages/SessionsPage";
 import CreditStatsPage from "@/pages/CreditStatsPage";
 import TokenStatsPage from "@/pages/TokenStatsPage";
-import SettingsPage from "@/pages/SettingsPage";
+import SettingsPage, { CodebuddySettingsPage } from "@/pages/SettingsPage";
 import QoderPage from "@/pages/QoderPage";
-import { StatusDot, AppIconMark } from "@/components/product-marks";
+import { StatusDot } from "@/components/product-marks";
 import { CompanionDemoDialog } from "@/components/companion-demo-dialog";
 import { UpdateInstallDialog } from "@/components/update-install-dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Toaster } from "@/components/ui/sonner";
@@ -23,9 +22,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import companionTrayIcon from "@/assets/agent-companion-tray.png";
 import { DEMO_UNAVAILABLE_MESSAGE, demoModeEnabled, pagesDemoHostingEnabled } from "@/lib/demo-mode";
 import { useSessionsNavEnabled } from "@/lib/nav-prefs";
-import { useSupportedTools } from "@/lib/supported-tools";
-import { setVendor, useVendor, type Vendor } from "@/lib/vendor";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { findPlatform, platformPath, readLastPlatform, rememberPlatform, useEnabledPlatforms, type PlatformId, type PlatformPageKey } from "@/lib/platforms";
+import { PlatformNav, PlatformRail } from "@/components/platform-sidebar";
 import { changeCompanionEnabled, useCompanionEnabled } from "@/lib/use-companion-enabled";
 import { useCreditAutoRefresh } from "@/lib/use-credit-auto-refresh";
 import { useRotateDeferredNotice } from "@/lib/use-rotate-deferred-notice";
@@ -227,14 +225,16 @@ function Layout() {
   const hasUnifiedTitleBar =
     api.isDesktop() && typeof navigator !== "undefined" && navigator.userAgent.includes("Macintosh");
   const sessionsNavEnabled = useSessionsNavEnabled();
-  const qoderEnabled = useSupportedTools().qoder;
-  const vendor = useVendor();
-  const navigate = useNavigate();
-  /** 切厂商回到账号管理：当前页（如积分统计）在另一个厂商下可能不存在。 */
-  function changeVendor(next: Vendor) {
-    setVendor(next);
-    navigate("/");
-  }
+  const platforms = useEnabledPlatforms();
+  const { pathname } = useLocation();
+  const onSettings = pathname.startsWith("/settings");
+  /** 平台页取路径里的平台；在全局设置页时沿用上次所在平台的导航。 */
+  const routePlatform = findPlatform(pathname.match(/^\/p\/([^/]+)/)?.[1]);
+  const activePlatform =
+    platforms.find((p) => p.id === routePlatform?.id) ??
+    platforms.find((p) => p.id === readLastPlatform()) ??
+    platforms[0];
+  const topPadding = hasUnifiedTitleBar ? "pt-20" : "pt-4";
   useCreditAutoRefresh();
   useWorkbuddyStatusRefresh();
   useRotateDeferredNotice();
@@ -248,111 +248,20 @@ function Layout() {
           aria-hidden="true"
         />
       ) : null}
-      <aside
-        className={cn(
-          "flex min-h-0 w-[220px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar px-3 pb-4",
-          hasUnifiedTitleBar ? "pt-20" : "pt-4",
-        )}
-      >
-        <div className="flex items-center gap-2.5 px-1 pb-5">
-          <AppIconMark size={36} className="drop-shadow-sm" />
-          <div className="min-w-0">
-            <div
-              className="text-[15px] leading-5 tracking-[-0.02em] text-sidebar-foreground/90"
-              style={{
-                fontFamily: '"Bricolage Grotesque Variable", "SF Pro Display", ui-sans-serif, sans-serif',
-                fontWeight: 640,
-              }}
-            >
-              WorkBuddy Switch Next
-            </div>
-            {demoModeEnabled && (
-              <Badge variant="secondary" className="mt-1 h-5 border-0 px-1.5 text-[10px] text-sidebar-foreground/60 shadow-none">
-                演示模式
-              </Badge>
-            )}
-          </div>
-        </div>
-        {qoderEnabled && (
-          /* 厂商切换放在最顶层：关联会话 / Token 统计 / 积分统计只有腾讯系的数据源，
-             选 Qoder 时下面只留 Qoder 能用的入口。 */
-          <div className="px-1 pb-4">
-            <Tabs value={vendor} onValueChange={(value) => changeVendor(value === "qoder" ? "qoder" : "tencent")}>
-              <TabsList aria-label="厂商" className="w-full">
-                <TabsTrigger value="tencent" className="flex-1">腾讯系</TabsTrigger>
-                <TabsTrigger value="qoder" className="flex-1">Qoder</TabsTrigger>
-              </TabsList>
-            </Tabs>
-          </div>
-        )}
-        <nav className="flex min-h-0 flex-1 flex-col gap-0.5" aria-label="主导航">
-          <NavLink
-            to="/"
-            end
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
-                isActive
-                  ? "bg-foreground/[0.06] font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-              )
-            }
-          >
-            <User className="size-4" />
-            账号管理
-          </NavLink>
-          {vendor === "tencent" && sessionsNavEnabled && (
-            <NavLink
-              to="/sessions"
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
-                  isActive
-                    ? "bg-foreground/[0.06] font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-                )
-              }
-            >
-              <Link2 className="size-4" />
-              关联会话
-            </NavLink>
-          )}
-          {vendor === "tencent" && (
-            <>
-              <NavLink to="/token-stats" className={({ isActive }) => cn("flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors", isActive ? "bg-foreground/[0.06] font-medium text-foreground" : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground")}><MessagesSquare className="size-4" />Token 统计</NavLink>
-              <NavLink
-                to="/credit-stats"
-                className={({ isActive }) =>
-                  cn(
-                    "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
-                    isActive
-                      ? "bg-foreground/[0.06] font-medium text-foreground"
-                      : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-                  )
-                }
-              >
-                <Sparkles className="size-4" />
-                积分统计
-              </NavLink>
-            </>
-          )}
-          <NavLink
-            to="/settings"
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
-                isActive
-                  ? "bg-foreground/[0.06] font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-              )
-            }
-          >
-            <Settings className="size-4" />
-            设置
-          </NavLink>
-        </nav>
-        {api.isWebui() && !demoModeEnabled ? null : <UpdateCenter running={running} />}
-      </aside>
+      <PlatformRail
+        platforms={platforms}
+        activePlatform={activePlatform.id}
+        onSettings={onSettings}
+        running={{ codebuddy: Boolean(running) }}
+        topPadding={topPadding}
+      />
+      <PlatformNav
+        platform={activePlatform}
+        sessionsNavEnabled={sessionsNavEnabled}
+        demoMode={demoModeEnabled}
+        topPadding={topPadding}
+        footer={api.isWebui() && !demoModeEnabled ? null : <UpdateCenter running={running} />}
+      />
       <main
         className={cn(
           "min-w-0 flex-1 overflow-y-auto bg-background overscroll-contain",
@@ -365,14 +274,43 @@ function Layout() {
   );
 }
 
-/** 同一路由按当前厂商渲染对应页面（账号管理：腾讯系账号页 / Qoder 账号页）。 */
-function VendorRoute({ tencent, qoder }: { tencent: ReactNode; qoder: ReactNode }) {
-  return <>{useVendor() === "qoder" ? qoder : tencent}</>;
+/** 各平台各页面的实现。注册表声明页面存在，这里给出组件；两边要对得上。 */
+const PLATFORM_PAGES: Record<PlatformId, Partial<Record<PlatformPageKey, ReactNode>>> = {
+  codebuddy: {
+    accounts: <AccountsPage />,
+    sessions: <SessionsPage />,
+    "token-stats": <TokenStatsPage />,
+    "credit-stats": <CreditStatsPage />,
+    settings: <CodebuddySettingsPage />,
+  },
+  qoder: { accounts: <QoderPage /> },
+};
+
+/** 进入应用时落到上次所在的平台（已关闭则取第一个启用的平台）。 */
+function HomeRedirect() {
+  const platforms = useEnabledPlatforms();
+  const last = readLastPlatform();
+  const target = platforms.find((p) => p.id === last) ?? platforms[0];
+  return <Navigate to={platformPath(target.id)} replace />;
 }
 
-/** 只有腾讯系数据源的页面：Qoder 下直接访问（含旧书签）回到账号管理。 */
-function TencentOnly({ children }: { children: ReactNode }) {
-  return useVendor() === "tencent" ? <>{children}</> : <Navigate to="/" replace />;
+/**
+ * `/p/:platform/:page`：平台未启用或不支持该页面时回到首页（含旧书签与手改地址）。
+ * 合法时记下当前平台，供下次启动与全局设置页沿用。
+ */
+function PlatformRoute() {
+  const { platform, page } = useParams();
+  const enabled = useEnabledPlatforms();
+  const def = enabled.find((p) => p.id === platform);
+  const pageDef = def?.pages.find((p) => p.key === page);
+  const element = def && pageDef ? PLATFORM_PAGES[def.id][pageDef.key] : undefined;
+  useEffect(() => {
+    if (def && element) rememberPlatform(def.id);
+  }, [def, element]);
+  // 平台有效但没有该页面（`/p/qoder`、`/p/qoder/settings`）：进该平台首页，而不是跳到别的平台。
+  if (def && !element) return <Navigate to={platformPath(def.id)} replace />;
+  if (!def) return <HomeRedirect />;
+  return <>{element}</>;
 }
 
 export default function App() {
@@ -383,12 +321,15 @@ export default function App() {
       <Router>
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<VendorRoute tencent={<AccountsPage />} qoder={<QoderPage />} />} />
-            <Route path="/sessions" element={<TencentOnly><SessionsPage /></TencentOnly>} />
-            <Route path="/credit-stats" element={<TencentOnly><CreditStatsPage /></TencentOnly>} />
-            <Route path="/token-stats" element={<TencentOnly><TokenStatsPage /></TencentOnly>} />
+            <Route path="/" element={<HomeRedirect />} />
+            <Route path="/p/:platform" element={<PlatformRoute />} />
+            <Route path="/p/:platform/:page" element={<PlatformRoute />} />
+            {/* 旧版顶层路径：这些页面原本只属于 WorkBuddy / CodeBuddy。 */}
+            <Route path="/sessions" element={<Navigate to={platformPath("codebuddy", "sessions")} replace />} />
+            <Route path="/credit-stats" element={<Navigate to={platformPath("codebuddy", "credit-stats")} replace />} />
+            <Route path="/token-stats" element={<Navigate to={platformPath("codebuddy", "token-stats")} replace />} />
             <Route path="/settings" element={<SettingsPage />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<HomeRedirect />} />
           </Route>
         </Routes>
         <Toaster />

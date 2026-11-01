@@ -49,7 +49,7 @@ function TargetMark({ target, size }: { target: QoderTarget; size: number }) {
   );
 }
 
-/** 页顶状态徽标：与腾讯系各端同一套样式（接入 = 品牌色描边，未接入 = 灰）。 */
+/** 页顶状态徽标：与 WorkBuddy / CodeBuddy 各端同一套样式（接入 = 品牌色描边，未接入 = 灰）。 */
 function HeaderBadge({ status }: { status: QoderTargetStatus | undefined }) {
   const target = status?.target ?? "desktop";
   return (
@@ -87,7 +87,7 @@ interface CardProps {
   onDelete: () => void;
 }
 
-/** Qoder 账号卡片：外观与腾讯系账号卡片一致（圆角卡片、header 标识、footer 操作）。 */
+/** Qoder 账号卡片：外观与 WorkBuddy / CodeBuddy 账号卡片一致（圆角卡片、header 标识、footer 操作）。 */
 function QoderAccountCard({ bundle, active, busy, switching, editing, draft, onDraftChange, onStartRename, onCommitRename, onCancelRename, onSwitch, onDelete }: CardProps) {
   const targetLabel = bundle.target === "desktop" ? "Qoder CN" : "Qoder CN CLI";
   return (
@@ -163,9 +163,9 @@ interface Props {
 }
 
 /**
- * Qoder 账号管理：与腾讯系账号页同一套版式（页顶徽标、添加账号面板、账号卡片网格）。
+ * Qoder 账号管理：与 WorkBuddy / CodeBuddy 账号页同一套版式（页顶徽标、添加账号面板、账号卡片网格）。
  *
- * Qoder 账号与腾讯系账号库不相通，这里的「账号」是账号包 —— 整组加密凭据文件的
+ * Qoder 账号与 WorkBuddy / CodeBuddy 账号库不相通，这里的「账号」是账号包 —— 整组加密凭据文件的
  * 本机副本。认领 = 保存现场登录态；切换 = 备份现场后整组写回并校验。
  */
 export function QoderAccountsView({ compact = false }: Props) {
