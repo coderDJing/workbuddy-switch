@@ -1,11 +1,13 @@
-# workbuddy-switch
+# WorkBuddy Switch Next
+
+**持续维护的 WorkBuddy 多账号管理工具，支持桌面 GUI 与 CLI。**
 
 本仓库是 [changexbc/workbuddy-switch](https://github.com/changexbc/workbuddy-switch) 的社区维护分支，维护完整的 GUI 与 CLI 体验，覆盖账号、认证、会话迁移、用量统计、客户端切换及会话悬浮窗。现有修复、维护计划、验证方式与发布状态见 [Fork 维护说明](docs/FORK-MAINTENANCE.md)。
 
 WorkBuddy、CodeBuddy IDE、CodeBuddy CLI 与 VS Code CodeBuddy 插件账号切换桌面 App（Tauri），四者均支持国内版 / 国际版，并提供积分到期与 Token 用量监控。
 
 <p align="center">
-  <img src="public/icon-transparent.png" alt="WorkBuddy Switch 图标" width="128" />
+  <img src="public/icon-transparent.png" alt="WorkBuddy Switch Next 图标" width="128" />
 </p>
 
 多账号共享登录态，一键切换 WorkBuddy 登录账号。**会话复制**：把当前账号的会话以新 id 复制给目标账号，源账号数据不受影响，云端归属目标账号。**关联会话**：复制过的会话会自动建立跨账号关联，集中查看各账号副本状态，并把新增内容同步过去。

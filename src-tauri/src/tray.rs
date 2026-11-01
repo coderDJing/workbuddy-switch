@@ -17,7 +17,7 @@ use crate::update_service::{UpdatePhase, UpdateSnapshot};
 
 const TRAY_ID: &str = "main-menu-bar";
 const MAIN_WINDOW_LABEL: &str = "main";
-const DEFAULT_TOOLTIP: &str = "workbuddy-switch";
+const DEFAULT_TOOLTIP: &str = "WorkBuddy Switch Next";
 const CHECKIN_TOOLTIP_RESTORE_SECS: u64 = 8;
 
 /// 系统自启注册的启动参数：仅携带该精确参数的启动进入静默托盘模式。
@@ -459,7 +459,7 @@ fn notify_checkin<R: Runtime>(app: &AppHandle<R>, body: &str) {
     let _ = app
         .notification()
         .builder()
-        .title("workbuddy-switch")
+        .title(DEFAULT_TOOLTIP)
         .body(body)
         .show();
 }
@@ -473,7 +473,7 @@ pub fn notify_rotate_deferred<R: Runtime>(app: &AppHandle<R>, notify: &Value) {
     let title = notify
         .get("title")
         .and_then(Value::as_str)
-        .unwrap_or("workbuddy-switch");
+        .unwrap_or(DEFAULT_TOOLTIP);
     let Some(body) = notify.get("body").and_then(Value::as_str) else {
         return;
     };

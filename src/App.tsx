@@ -246,13 +246,13 @@ function Layout() {
           <AppIconMark size={36} className="drop-shadow-sm" />
           <div className="min-w-0">
             <div
-              className="truncate text-[15px] leading-5 tracking-[-0.02em] text-sidebar-foreground/90"
+              className="text-[15px] leading-5 tracking-[-0.02em] text-sidebar-foreground/90"
               style={{
                 fontFamily: '"Bricolage Grotesque Variable", "SF Pro Display", ui-sans-serif, sans-serif',
                 fontWeight: 640,
               }}
             >
-              WorkBuddy Switch
+              WorkBuddy Switch Next
             </div>
             {demoModeEnabled && (
               <Badge variant="secondary" className="mt-1 h-5 border-0 px-1.5 text-[10px] text-sidebar-foreground/60 shadow-none">

@@ -1,6 +1,12 @@
-# Fork 维护说明
+# WorkBuddy Switch Next 维护说明
 
 本仓库基于 [changexbc/workbuddy-switch](https://github.com/changexbc/workbuddy-switch)，在 [coderDJing/workbuddy-switch](https://github.com/coderDJing/workbuddy-switch) 继续维护。保留上游版权与 MIT 许可，修复仍可向上游提交。
+
+## 项目名称
+
+用户于 2026-11-01 选定 **WorkBuddy Switch Next**。项目介绍、应用侧栏、网页/桌面窗口标题及系统通知使用该名称；简介为“持续维护的 WorkBuddy 多账号管理工具，支持桌面 GUI 与 CLI”。保留原项目来源、版权与 MIT 许可。
+
+当前仓库地址仍是 `coderDJing/workbuddy-switch`。本次先统一展示名称；安装包 productName、应用 identifier、CLI 命令、npm 包名及更新源随独立发布一起迁移，避免名称与打包脚本或用户数据路径脱节。尚未发布独立 Next 安装包或 npm 包。
 
 ## 产品维护范围
 

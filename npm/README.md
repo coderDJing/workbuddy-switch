@@ -1,4 +1,6 @@
-# workbuddy-switch
+# WorkBuddy Switch Next
+
+基于 [WorkBuddy Switch](https://github.com/changexbc/workbuddy-switch) 的社区维护版本。Next 尚未发布独立 npm 包；以下安装命令和下载链接仍指向上游发行版，不包含 Next 的新增改动。
 
 WorkBuddy、CodeBuddy IDE、CodeBuddy CLI 与 VS Code CodeBuddy 插件账号切换工具，浏览器中操作（webui），四者均支持国内版 / 国际版，并提供积分到期与 Token 用量监控。同时提供桌面 App（Tauri）版本。
 
