@@ -20,7 +20,8 @@ impl Drop for Sandbox {
 }
 
 fn sandbox() -> Sandbox {
-    let root = std::env::temp_dir().join(format!("wb-qoder-test-{}", uuid::Uuid::new_v4().simple()));
+    let root =
+        std::env::temp_dir().join(format!("wb-qoder-test-{}", uuid::Uuid::new_v4().simple()));
     let roots = QoderRoots {
         home: root.join("home"),
         app_data: root.join("appdata"),
@@ -68,7 +69,11 @@ struct FakeOps {
 
 impl QoderProcessOps for FakeOps {
     fn running_pids(&self, _: QoderTarget) -> Vec<u32> {
-        if self.running.get() { vec![42] } else { Vec::new() }
+        if self.running.get() {
+            vec![42]
+        } else {
+            Vec::new()
+        }
     }
     fn running_exe(&self, _: QoderTarget) -> Option<PathBuf> {
         self.running.get().then(|| PathBuf::from("Qoder CN.exe"))
@@ -110,7 +115,10 @@ fn capture_labels_from_echo_and_dedups_by_hash() {
     let again = store::capture(&sb.store, &sb.roots, QoderTarget::Desktop, None).unwrap();
     assert_eq!(a.id, again.id);
     assert_eq!(store::list(&sb.store, None).len(), 1);
-    assert_eq!(store::current_id(&sb.store, &sb.roots, QoderTarget::Desktop), Some(a.id));
+    assert_eq!(
+        store::current_id(&sb.store, &sb.roots, QoderTarget::Desktop),
+        Some(a.id)
+    );
 }
 
 #[test]
@@ -122,7 +130,10 @@ fn capture_refreshes_same_echo_name_instead_of_duplicating() {
     let second = store::capture(&sb.store, &sb.roots, QoderTarget::Desktop, None).unwrap();
     assert_eq!(first.id, second.id);
     assert_eq!(second.label, "工作号", "刷新不应覆盖用户起的名字");
-    assert_eq!(second.primary_sha(), Some(store::sha256_hex(b"token-a2").as_str()));
+    assert_eq!(
+        second.primary_sha(),
+        Some(store::sha256_hex(b"token-a2").as_str())
+    );
 }
 
 #[test]
@@ -138,10 +149,18 @@ fn switch_writes_bundle_and_removes_unpaired_overlay() {
     assert_eq!(out["unchanged"], false);
     let dir = sb.roots.desktop_dir();
     assert_eq!(read(&dir.join("auth.v1.dat")), b"token-a");
-    assert!(!dir.join("auth-profile-overlays.v1.dat").exists(), "A 没有成组文件，B 的那份要移除");
-    assert!(read(&sb.roots.status_echo()).windows(5).any(|w| w == b"Alice"));
+    assert!(
+        !dir.join("auth-profile-overlays.v1.dat").exists(),
+        "A 没有成组文件，B 的那份要移除"
+    );
+    assert!(read(&sb.roots.status_echo())
+        .windows(5)
+        .any(|w| w == b"Alice"));
     assert_eq!(ops.closed.get(), 0, "目标没在运行，不应关闭");
-    assert_eq!(store::current_id(&sb.store, &sb.roots, QoderTarget::Desktop), Some(a.id));
+    assert_eq!(
+        store::current_id(&sb.store, &sb.roots, QoderTarget::Desktop),
+        Some(a.id)
+    );
 }
 
 #[test]
@@ -151,7 +170,15 @@ fn switch_auto_saves_unknown_live_login() {
     let a = store::capture(&sb.store, &sb.roots, QoderTarget::Desktop, None).unwrap();
     login_desktop(&sb, b"token-c", "Carol", None);
 
-    let out = execute(&sb.store, &sb.roots, &FakeOps::default(), &a.id, OPEN, &no_progress).unwrap();
+    let out = execute(
+        &sb.store,
+        &sb.roots,
+        &FakeOps::default(),
+        &a.id,
+        OPEN,
+        &no_progress,
+    )
+    .unwrap();
     let saved = out["autoSavedId"].as_str().expect("现场应被自动认领");
     assert_eq!(store::load(&sb.store, saved).unwrap().label, "Carol");
     assert_eq!(store::list(&sb.store, None).len(), 2);
@@ -181,7 +208,10 @@ fn switch_closes_and_relaunches_running_desktop() {
     ops.running.set(true);
     let out = execute(&sb.store, &sb.roots, &ops, &a.id, OPEN, &no_progress).unwrap();
     assert_eq!(ops.closed.get(), 1);
-    assert_eq!(*ops.launched.borrow(), vec![Some(PathBuf::from("Qoder CN.exe"))]);
+    assert_eq!(
+        *ops.launched.borrow(),
+        vec![Some(PathBuf::from("Qoder CN.exe"))]
+    );
     assert_eq!(out["relaunched"], true);
 }
 
@@ -195,16 +225,26 @@ fn switch_refuses_running_target_without_permission_or_when_hosted() {
 
     let ops = FakeOps::default();
     ops.running.set(true);
-    let manual = SwitchOptions { close_running: false, relaunch: false };
+    let manual = SwitchOptions {
+        close_running: false,
+        relaunch: false,
+    };
     let err = execute(&sb.store, &sb.roots, &ops, &a.id, manual, &no_progress).unwrap_err();
     assert!(err.contains("正在运行"), "{err}");
 
-    let hosted = FakeOps { hosted: true, ..FakeOps::default() };
+    let hosted = FakeOps {
+        hosted: true,
+        ..FakeOps::default()
+    };
     hosted.running.set(true);
     let err = execute(&sb.store, &sb.roots, &hosted, &a.id, OPEN, &no_progress).unwrap_err();
     assert!(err.contains("托管"), "{err}");
     assert_eq!(hosted.closed.get(), 0);
-    assert_eq!(read(&sb.roots.desktop_dir().join("auth.v1.dat")), b"token-b", "拒绝时现场不能被改");
+    assert_eq!(
+        read(&sb.roots.desktop_dir().join("auth.v1.dat")),
+        b"token-b",
+        "拒绝时现场不能被改"
+    );
 }
 
 #[test]
@@ -213,11 +253,27 @@ fn switch_rejects_tampered_bundle_without_touching_live() {
     login_desktop(&sb, b"token-a", "Alice", None);
     let a = store::capture(&sb.store, &sb.roots, QoderTarget::Desktop, None).unwrap();
     login_desktop(&sb, b"token-b", "Bob", None);
-    put(&store::bundle_dir(&sb.store, &a.id).unwrap().join("auth.v1.dat"), b"tampered");
+    put(
+        &store::bundle_dir(&sb.store, &a.id)
+            .unwrap()
+            .join("auth.v1.dat"),
+        b"tampered",
+    );
 
-    let err = execute(&sb.store, &sb.roots, &FakeOps::default(), &a.id, OPEN, &no_progress).unwrap_err();
+    let err = execute(
+        &sb.store,
+        &sb.roots,
+        &FakeOps::default(),
+        &a.id,
+        OPEN,
+        &no_progress,
+    )
+    .unwrap_err();
     assert!(err.contains("校验失败"), "{err}");
-    assert_eq!(read(&sb.roots.desktop_dir().join("auth.v1.dat")), b"token-b");
+    assert_eq!(
+        read(&sb.roots.desktop_dir().join("auth.v1.dat")),
+        b"token-b"
+    );
 }
 
 #[test]

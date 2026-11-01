@@ -110,21 +110,33 @@ pub fn credentials(roots: &QoderRoots, target: QoderTarget) -> Vec<CredentialSpe
                 Criticality::Required
             };
             vec![
-                spec("auth.v1.dat", dir.join("auth.v1.dat"), Criticality::Required),
+                spec(
+                    "auth.v1.dat",
+                    dir.join("auth.v1.dat"),
+                    Criticality::Required,
+                ),
                 spec("Local State", dir.join("Local State"), local_state),
                 spec(
                     "auth-profile-overlays.v1.dat",
                     dir.join("auth-profile-overlays.v1.dat"),
                     Criticality::Paired,
                 ),
-                spec("auth.machine-id", dir.join("auth.machine-id"), Criticality::Optional),
+                spec(
+                    "auth.machine-id",
+                    dir.join("auth.machine-id"),
+                    Criticality::Optional,
+                ),
                 spec(
                     "channel-activation.v1.json",
                     dir.join("channel-activation.v1.json"),
                     Criticality::Optional,
                 ),
                 // 回显随账号走，否则换号后界面仍显示上一个账号的名字。
-                spec(".qoder-app-status.json", roots.status_echo(), Criticality::Paired),
+                spec(
+                    ".qoder-app-status.json",
+                    roots.status_echo(),
+                    Criticality::Paired,
+                ),
             ]
         }
         QoderTarget::Cli => {

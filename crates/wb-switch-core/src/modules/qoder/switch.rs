@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-use super::paths::{credentials, Criticality, CredentialSpec, QoderRoots, QoderTarget};
+use super::paths::{credentials, CredentialSpec, Criticality, QoderRoots, QoderTarget};
 use super::proc::QoderProcessOps;
 use super::store::{self, sha256_hex, BundleMeta};
 
@@ -34,7 +34,11 @@ fn backups_dir(store: &Path) -> PathBuf {
 }
 
 /// 把现场整组凭据备份进新目录；清单先于任何写入落盘。
-fn backup_live(store: &Path, target: QoderTarget, specs: &[CredentialSpec]) -> Result<PathBuf, String> {
+fn backup_live(
+    store: &Path,
+    target: QoderTarget,
+    specs: &[CredentialSpec],
+) -> Result<PathBuf, String> {
     let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%3f");
     let dir = backups_dir(store).join(format!("{}-{stamp}", target_slug(target)));
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建备份目录失败: {e}"))?;
@@ -42,7 +46,8 @@ fn backup_live(store: &Path, target: QoderTarget, specs: &[CredentialSpec]) -> R
     for spec in specs {
         let existed = match std::fs::read(&spec.path) {
             Ok(bytes) => {
-                std::fs::write(dir.join(spec.name), bytes).map_err(|e| format!("备份 {} 失败: {e}", spec.name))?;
+                std::fs::write(dir.join(spec.name), bytes)
+                    .map_err(|e| format!("备份 {} 失败: {e}", spec.name))?;
                 true
             }
             Err(_) => false,
@@ -109,7 +114,10 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
     let tmp = path.with_file_name(format!("{name}.tmp-{}", uuid::Uuid::new_v4().simple()));
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, path).inspect_err(|_| {
@@ -153,9 +161,15 @@ pub fn execute(
     let target = meta.target;
     let specs = credentials(roots, target);
     let payload = load_payload(store, &meta)?;
-    for spec in specs.iter().filter(|s| s.criticality == Criticality::Required) {
+    for spec in specs
+        .iter()
+        .filter(|s| s.criticality == Criticality::Required)
+    {
         if !payload.iter().any(|(n, _)| n == spec.name) {
-            return Err(format!("账号包缺少必需文件 {}，拒绝半换号，请重新认领该账号", spec.name));
+            return Err(format!(
+                "账号包缺少必需文件 {}，拒绝半换号，请重新认领该账号",
+                spec.name
+            ));
         }
     }
 
@@ -165,7 +179,9 @@ pub fn execute(
     // 现场登录态还没存成账号包时先认领，避免切走后再也回不去。
     let mut warnings: Vec<String> = Vec::new();
     let mut auto_saved: Option<BundleMeta> = None;
-    if store::live_primary_sha(roots, target).is_some() && store::current_id(store, roots, target).is_none() {
+    if store::live_primary_sha(roots, target).is_some()
+        && store::current_id(store, roots, target).is_none()
+    {
         progress("保存当前登录态…");
         match store::capture(store, roots, target, None) {
             Ok(saved) => auto_saved = Some(saved),
@@ -180,7 +196,11 @@ pub fn execute(
     }
 
     let was_running = !ops.running_pids(target).is_empty();
-    let running_exe = if was_running { ops.running_exe(target) } else { None };
+    let running_exe = if was_running {
+        ops.running_exe(target)
+    } else {
+        None
+    };
     if was_running {
         if ops.hosted_by(target) {
             return Err(format!(
@@ -205,7 +225,11 @@ pub fn execute(
         let tail = if failed.is_empty() {
             "已回滚到切换前状态".to_string()
         } else {
-            format!("回滚未完全成功（{}），备份在 {}", failed.join("；"), backup.display())
+            format!(
+                "回滚未完全成功（{}），备份在 {}",
+                failed.join("；"),
+                backup.display()
+            )
         };
         return Err(format!("切换失败：{reason}，{tail}"));
     }
@@ -243,14 +267,17 @@ fn apply(specs: &[CredentialSpec], payload: &[(String, Vec<u8>)]) -> Result<(), 
         let incoming = payload.iter().find(|(n, _)| n == spec.name).map(|(_, b)| b);
         match (incoming, spec.criticality) {
             (Some(bytes), _) => {
-                write_bytes_atomic(&spec.path, bytes).map_err(|e| format!("写入 {} 失败: {e}", spec.name))?;
-                let back = std::fs::read(&spec.path).map_err(|e| format!("读回 {} 失败: {e}", spec.name))?;
+                write_bytes_atomic(&spec.path, bytes)
+                    .map_err(|e| format!("写入 {} 失败: {e}", spec.name))?;
+                let back = std::fs::read(&spec.path)
+                    .map_err(|e| format!("读回 {} 失败: {e}", spec.name))?;
                 if sha256_hex(&back) != sha256_hex(bytes) {
                     return Err(format!("{} 写入后校验不一致", spec.name));
                 }
             }
             (None, Criticality::Paired) => {
-                remove_if_exists(&spec.path).map_err(|e| format!("移除 {} 失败: {e}", spec.name))?;
+                remove_if_exists(&spec.path)
+                    .map_err(|e| format!("移除 {} 失败: {e}", spec.name))?;
             }
             (None, _) => {}
         }

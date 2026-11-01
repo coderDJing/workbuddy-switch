@@ -162,7 +162,9 @@ pub fn capture(
         .find(|m| m.primary_sha() == Some(primary.as_str()))
         .or_else(|| {
             let name = echo_name.as_deref()?;
-            existing.iter().find(|m| m.echo_name.as_deref() == Some(name))
+            existing
+                .iter()
+                .find(|m| m.echo_name.as_deref() == Some(name))
         })
         .cloned();
 

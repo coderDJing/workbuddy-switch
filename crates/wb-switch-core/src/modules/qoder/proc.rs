@@ -2,10 +2,13 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-#[allow(unused_imports)]
-use crate::modules::process::{self, run_cmd_timeout};
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use crate::modules::process;
+use crate::modules::process::run_cmd_timeout;
 
-use super::paths::{process_images, QoderRoots, QoderTarget};
+#[cfg(not(target_os = "macos"))]
+use super::paths::process_images;
+use super::paths::{QoderRoots, QoderTarget};
 
 pub trait QoderProcessOps {
     fn running_pids(&self, target: QoderTarget) -> Vec<u32>;

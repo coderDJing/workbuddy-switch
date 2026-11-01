@@ -68,5 +68,12 @@ pub fn delete(id: &str) -> Result<(), String> {
 
 pub fn switch_to(id: &str, opts: SwitchOptions, progress: &dyn Fn(&str)) -> Result<Value, String> {
     let ops: &dyn QoderProcessOps = &RealProcessOps;
-    switch::execute(&store::default_store(), &QoderRoots::real(), ops, id, opts, progress)
+    switch::execute(
+        &store::default_store(),
+        &QoderRoots::real(),
+        ops,
+        id,
+        opts,
+        progress,
+    )
 }
