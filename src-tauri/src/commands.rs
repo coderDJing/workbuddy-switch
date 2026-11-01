@@ -1361,6 +1361,33 @@ pub async fn check_update(
     crate::update_service::check(&app, proxy.as_deref(), force.unwrap_or(false)).await
 }
 
+/// RC diagnostics accept only fixed update UI stages, never arguments or error bodies.
+#[tauri::command]
+pub fn record_update_diagnostic(event: String, elapsed_ms: u64) {
+    if matches!(
+        event.as_str(),
+        "clicked" | "resolved" | "rejected" | "timeout"
+    ) {
+        wb_switch_core::modules::rc_diagnostics::record(
+            "update_ui",
+            &event,
+            json!({"elapsedMs": elapsed_ms}),
+        );
+    }
+}
+
+#[tauri::command]
+pub fn reveal_rc_diagnostics(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    if !wb_switch_core::modules::rc_diagnostics::enabled_for_version(update::APP_VERSION) {
+        return Err("当前版本未启用 RC 诊断日志".to_string());
+    }
+    wb_switch_core::modules::rc_diagnostics::record("update_ui", "open_log", json!({}));
+    app.opener()
+        .reveal_item_in_dir(wb_switch_core::modules::rc_diagnostics::log_path())
+        .map_err(|_| "打开 RC 日志位置失败".to_string())
+}
+
 /// GET /api/update/state —— 当前更新状态快照（前端首屏初始化 + 事件丢失兜底）。
 #[tauri::command]
 pub fn update_state() -> crate::update_service::UpdateSnapshot {

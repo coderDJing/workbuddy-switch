@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { releaseChannel, resolveReleaseVersion } from './release-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const version = process.argv[2];
-if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version || '')) {
-  throw new Error('Usage: node scripts/bump-version.mjs <semver>');
-}
+if (!process.argv[2]) throw new Error('Usage: node scripts/bump-version.mjs rc|stable|<X.Y.Z[-rc.N]>');
+const currentRelease = JSON.parse(fs.readFileSync(path.join(root, 'release-config.json'), 'utf8'));
+const version = resolveReleaseVersion(currentRelease.version, process.argv[2]);
 const editJson = (relative, edit) => {
   const file = path.join(root, relative);
   const data = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -15,7 +15,7 @@ const editJson = (relative, edit) => {
 };
 editJson('release-config.json', data => {
   data.version = version;
-  data.channel = version.includes('-') ? 'preview' : 'stable';
+  data.channel = releaseChannel(version);
 });
 const release = JSON.parse(fs.readFileSync(path.join(root, 'release-config.json'), 'utf8'));
 editJson('package.json', data => { data.name = release.slug; data.version = version; });
@@ -46,4 +46,4 @@ for (const relative of ['crates/wb-switch-core/Cargo.toml', 'crates/wb-switch-se
 const updateFile = path.join(root, 'crates/wb-switch-core/src/modules/update.rs');
 fs.writeFileSync(updateFile, fs.readFileSync(updateFile, 'utf8')
   .replace(/pub const UPDATE_CHANNEL: &str = "[^"]+";/, `pub const UPDATE_CHANNEL: &str = "${release.channel}";`));
-console.log(`Synchronized Next version ${version} (${release.channel}); run cargo check to refresh Cargo.lock.`);
+console.log(`Synchronized Next version ${version} (${release.channel === 'preview' ? 'RC' : 'stable'}); run cargo check to refresh Cargo.lock.`);

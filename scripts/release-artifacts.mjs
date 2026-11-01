@@ -2,12 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { assertReleaseChannel, parseReleaseVersion } from './release-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-export const readRelease = () => JSON.parse(fs.readFileSync(path.join(root, 'release-config.json'), 'utf8'));
+function validateRelease(release) {
+  parseReleaseVersion(release.version);
+  if (release.channel !== undefined) assertReleaseChannel(release.version, release.channel);
+  return release;
+}
+export const readRelease = () => validateRelease(JSON.parse(fs.readFileSync(path.join(root, 'release-config.json'), 'utf8')));
 
 export function buildManifest({ release, archiveName, signature, keys, date = new Date().toISOString() }) {
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(release.version)) throw new Error('Invalid release version');
+  validateRelease(release);
   if (!archiveName || archiveName !== path.basename(archiveName) || /[\\/]/.test(archiveName)) throw new Error('Invalid archive name');
   if (!signature.trim() || !keys.length) throw new Error('Missing signature or platform keys');
   const url = `https://github.com/${release.owner}/${release.repo}/releases/download/v${release.version}/${encodeURIComponent(archiveName)}`;
@@ -34,7 +40,7 @@ function singleArchive(folder, spec, version) {
 }
 
 export function manifestFromEnvironment(env = process.env, config = readRelease()) {
-  const release = { ...config, version: env.UPDATE_VERSION || config.version };
+  const release = validateRelease({ ...config, version: env.UPDATE_VERSION || config.version });
   const os = env.UPDATE_OS || 'macos', arch = env.UPDATE_ARCH || 'aarch64';
   const spec = platformSpec(os, arch, env.UPDATE_BUNDLE);
   const folder = path.resolve(root, env.BUNDLE_DIR || `target/release/bundle/${spec.folder}`);
@@ -93,6 +99,7 @@ export function checksumDirectory(folder) {
 }
 
 export function validateArtifacts(folder, release = readRelease()) {
+  validateRelease(release);
   const manifests = fs.readdirSync(folder).filter(name => /^latest.*\.json$/.test(name));
   if (!manifests.includes('latest.json')) throw new Error('Missing merged updater manifest');
   const prefix = `https://github.com/${release.owner}/${release.repo}/releases/download/v${release.version}/`;

@@ -538,11 +538,32 @@ pub(crate) fn reset_tray_tooltip<R: Runtime>(app: &AppHandle<R>) {
 ///
 /// 注意：不要在指针进入 / 点击回调里重建——菜单正在展示时 `set_menu` 会让它闪掉。
 pub(crate) fn refresh_tray_menu<R: Runtime>(app: &AppHandle<R>) {
+    let started = std::time::Instant::now();
+    wb_switch_core::modules::rc_diagnostics::record(
+        "tray",
+        "menu_build_started",
+        serde_json::json!({}),
+    );
     let Ok(menu) = build_tray_menu(app) else {
+        wb_switch_core::modules::rc_diagnostics::record(
+            "tray",
+            "menu_build_failed",
+            serde_json::json!({"elapsedMs": started.elapsed().as_millis()}),
+        );
         return;
     };
+    wb_switch_core::modules::rc_diagnostics::record(
+        "tray",
+        "menu_built",
+        serde_json::json!({"elapsedMs": started.elapsed().as_millis()}),
+    );
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_menu(Some(menu));
+        let ok = tray.set_menu(Some(menu)).is_ok();
+        wb_switch_core::modules::rc_diagnostics::record(
+            "tray",
+            "menu_set",
+            serde_json::json!({"ok": ok, "elapsedMs": started.elapsed().as_millis()}),
+        );
     }
 }
 

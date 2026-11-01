@@ -12,6 +12,9 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::time::Instant;
+
+use crate::modules::rc_diagnostics;
 
 use crate::modules::config::{
     atomic_write, http_request_raw, http_request_with_proxy, now_secs, store_dir,
@@ -167,9 +170,24 @@ async fn fetch_manifest_version(
     headers.insert("Accept".to_string(), "application/json".to_string());
     headers.insert("User-Agent".to_string(), "wb-switch".to_string());
     let mut last_err = "更新清单解析失败".to_string();
-    for url in updater_manifest_urls(owner, repo, std::env::consts::OS, std::env::consts::ARCH) {
+    for (index, url) in
+        updater_manifest_urls(owner, repo, std::env::consts::OS, std::env::consts::ARCH)
+            .into_iter()
+            .enumerate()
+    {
+        let started = Instant::now();
+        rc_diagnostics::record(
+            "update_http",
+            "manifest_started",
+            json!({"attempt": index + 1, "explicitProxy": proxy.is_some_and(|p| !p.trim().is_empty())}),
+        );
         let resp = http_request_with_proxy(&url, "GET", None, Some(&headers), proxy).await;
         let version = resp.get("version").and_then(|v| v.as_str()).unwrap_or("");
+        rc_diagnostics::record(
+            "update_http",
+            "manifest_finished",
+            json!({"attempt": index + 1, "validVersion": parse_version(version).is_ok(), "code": resp.get("code").and_then(Value::as_i64), "elapsedMs": started.elapsed().as_millis()}),
+        );
         if parse_version(version).is_ok() {
             return Ok(resp);
         }
@@ -234,15 +252,22 @@ async fn fetch_latest_tag(
 /// `force=true` 绕过缓存强制刷新（设置页手动检查）；否则 6 小时内成功结果直接返回，
 /// 不发网络请求。主端点 manifest 失败时自动走 302 兜底；两个端点都失败返回可读错误。
 pub async fn update_check(proxy: Option<&str>, force: bool) -> Value {
+    rc_diagnostics::record("update_core", "check_started", json!({"force": force}));
     if !force {
         if let Some(cached) = CACHE.lock().unwrap().as_ref() {
             if now_secs() - cached.checked_at < CACHE_TTL_SECS {
+                rc_diagnostics::record("update_core", "cache_hit", json!({}));
                 return cached.value.clone();
             }
         }
     }
 
     let cfg = load_github_config();
+    rc_diagnostics::record(
+        "update_core",
+        "config_loaded",
+        json!({"channel": UPDATE_CHANNEL}),
+    );
     let owner = cfg
         .get("owner")
         .and_then(|v| v.as_str())

@@ -64,6 +64,8 @@ import type {
 } from "./types";
 import { DEMO_UNAVAILABLE_MESSAGE, demoModeEnabled } from "./demo-mode";
 import { screenshotDemoResponse } from "./screenshot-demo";
+import { RC_DIAGNOSTICS_ENABLED } from "./update";
+import { UpdateCheckTimeoutError, waitForUpdateCheck } from "./update-check";
 
 /**
  * 双通道适配层：
@@ -1048,8 +1050,26 @@ export function saveGithubConfig(config: GithubConfig): Promise<GithubConfig> {
   });
 }
 
-export function checkUpdate(proxy?: string, force?: boolean): Promise<UpdateInfo> {
-  return call("check_update", { proxy: proxy?.trim() || null, force: force ?? false });
+function recordUpdateDiagnostic(event: "clicked" | "resolved" | "rejected" | "timeout", elapsedMs: number) {
+  if (!RC_DIAGNOSTICS_ENABLED || demoModeEnabled || isWebui()) return;
+  void invoke("record_update_diagnostic", { event, elapsedMs: Math.round(elapsedMs) }).catch(() => {});
+}
+
+export async function checkUpdate(proxy?: string, force?: boolean): Promise<UpdateInfo> {
+  const started = performance.now();
+  recordUpdateDiagnostic("clicked", 0);
+  try {
+    const result = await waitForUpdateCheck(call<UpdateInfo>("check_update", { proxy: proxy?.trim() || null, force: force ?? false }));
+    recordUpdateDiagnostic("resolved", performance.now() - started);
+    return result;
+  } catch (error) {
+    recordUpdateDiagnostic(error instanceof UpdateCheckTimeoutError ? "timeout" : "rejected", performance.now() - started);
+    throw error;
+  }
+}
+
+export function revealRcDiagnostics(): Promise<void> {
+  return call("reveal_rc_diagnostics");
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import release from "../../release-config.json";
 
 export const APP_VERSION = release.version;
+export const RC_DIAGNOSTICS_ENABLED = /^\d+\.\d+\.\d+-rc(?:\.|$)/.test(APP_VERSION);
 export const GITHUB_OWNER = release.owner;
 export const GITHUB_REPO = release.repo;
 export const GITHUB_REPOSITORY_URL = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}`;

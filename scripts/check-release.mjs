@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertReleaseChannel } from './release-policy.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const json = name => JSON.parse(read(name));
 const release = json('release-config.json');
+assertReleaseChannel(release.version, release.channel);
 const config = json('src-tauri/tauri.conf.json');
 for (const name of ['package.json', 'package-lock.json', 'npm/package.json', 'src-tauri/tauri.conf.json']) {
   assert.equal(json(name).version, release.version, `Version mismatch: ${name}`);
@@ -39,4 +41,4 @@ for (const [constant, value] of [['GITHUB_OWNER', release.owner], ['GITHUB_REPO'
 if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME !== release.previewTag) {
   assert.equal(process.env.GITHUB_REF_NAME, `v${release.version}`, 'Tag must match every shipped manifest');
 }
-console.log(`Release identity and version check passed: ${release.productName} ${release.version} (${release.channel}).`);
+console.log(`Release identity and version check passed: ${release.productName} ${release.version} (${release.channel === 'preview' ? 'RC' : 'stable'}).`);

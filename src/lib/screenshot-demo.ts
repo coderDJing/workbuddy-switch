@@ -1002,7 +1002,7 @@ export function screenshotDemoResponse(command: string, args?: Record<string, un
     case "get_github_config": return githubConfig;
     case "get_webdav_config": return { url: "https://dav.example.invalid/dav", username: "demo", remotePath: "wb-switch", hasPassword: true };
     case "webdav_info": return { exists: true, accountCount: accounts.length, deviceName: "演示电脑", updatedAt: demoNow, remote: { dirUrl: "https://dav.example.invalid/dav/wb-switch/", fileUrl: "https://dav.example.invalid/dav/wb-switch/wb-switch-backup.wbs" } };
-    case "check_update": return { ok: true, current: APP_VERSION, latest: "0.2.0-beta.2", latestTag: "v0.2.0-beta.2", hasUpdate: true, releaseName: "更新提示演示", releaseUrl: GITHUB_RELEASE_URL };
+    case "check_update": return { ok: true, current: APP_VERSION, latest: "0.2.1-rc.202611020100", latestTag: "v0.2.1-rc.202611020100", hasUpdate: true, releaseName: "更新提示演示", releaseUrl: GITHUB_RELEASE_URL };
     case "get_launch_at_login_enabled": return true;
     case "switch_progress": return { running: false, progress: null };
     default: throw new Error(`演示模式缺少只读数据: ${command}`);

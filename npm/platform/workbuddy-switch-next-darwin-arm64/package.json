@@ -1,6 +1,6 @@
 {
   "name": "workbuddy-switch-next-darwin-arm64",
-  "version": "0.2.0-rc.3",
+  "version": "0.2.0-rc.202611020103",
   "description": "workbuddy-switch-next-darwin-arm64 platform binary",
   "os": [
     "darwin"

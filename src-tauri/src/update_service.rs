@@ -22,7 +22,7 @@ use tauri::{AppHandle, Emitter, Runtime};
 use tauri_plugin_updater::UpdaterExt;
 
 use wb_switch_core::modules::config::now_secs;
-use wb_switch_core::modules::update;
+use wb_switch_core::modules::{rc_diagnostics, update};
 
 /// 后台首次检查延迟：启动 15 秒后（替代前端 30 分钟轮询的首屏延迟）。
 pub const FIRST_CHECK_DELAY: Duration = Duration::from_secs(15);
@@ -289,7 +289,10 @@ fn should_rebuild_menu(percent: u8) -> bool {
 ///
 /// 已有更新任务在跑时直接返回忙碌错误，不并发触发第二次检查。
 pub async fn check<R: Runtime>(app: &AppHandle<R>, proxy: Option<&str>, force: bool) -> Value {
+    let started = std::time::Instant::now();
+    rc_diagnostics::record("update", "command_started", json!({"force": force}));
     let Some(_busy) = BusyGuard::acquire() else {
+        rc_diagnostics::record("update", "busy", json!({}));
         // 互斥拒绝不写日志到 stderr 之外：托盘文案已表达同一件事。
         eprintln!("[更新] 已有任务在跑，跳过本次检查");
         let mut value = json!({
@@ -302,11 +305,22 @@ pub async fn check<R: Runtime>(app: &AppHandle<R>, proxy: Option<&str>, force: b
     };
     eprintln!("[更新] 检查更新（force={force}）");
     set_phase(app, begin_check());
+    rc_diagnostics::record("update", "network_started", json!({}));
     let result = update::update_check(proxy, force).await;
+    rc_diagnostics::record(
+        "update",
+        "network_finished",
+        json!({"ok": result["ok"], "elapsedMs": started.elapsed().as_millis()}),
+    );
     let snapshot = set_phase(app, apply_check_result(&result));
     eprintln!(
         "[更新] 检查结果：{:?} latest={:?}",
         snapshot.phase, snapshot.latest
+    );
+    rc_diagnostics::record(
+        "update",
+        "command_finished",
+        json!({"phase": snapshot.phase, "elapsedMs": started.elapsed().as_millis()}),
     );
     result
 }
@@ -567,8 +581,23 @@ fn release_url() -> String {
 
 /// 统一状态出口：写好的快照经 emit + 托盘刷新对外可见。
 fn set_phase<R: Runtime>(app: &AppHandle<R>, snapshot: UpdateSnapshot) -> UpdateSnapshot {
-    let _ = app.emit("update-state", &snapshot);
+    rc_diagnostics::record(
+        "update",
+        "state_emit_started",
+        json!({"phase": snapshot.phase}),
+    );
+    let emitted = app.emit("update-state", &snapshot).is_ok();
+    rc_diagnostics::record(
+        "update",
+        "state_emitted",
+        json!({"phase": snapshot.phase, "ok": emitted}),
+    );
     refresh_tray(app);
+    rc_diagnostics::record(
+        "update",
+        "state_published",
+        json!({"phase": snapshot.phase}),
+    );
     snapshot
 }
 

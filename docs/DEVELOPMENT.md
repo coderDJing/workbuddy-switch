@@ -29,7 +29,7 @@ npm run build:app:release
 
 ## 版本与分发身份
 
-运行 `npm run version:set -- 0.2.0-beta.2` 同步前端、三个 Rust 包、Tauri、npm 主包和平台包；再运行 Cargo 命令更新 Cargo.lock。带预发布后缀的版本使用 preview 更新入口；正式版本使用 Releases latest 入口。
+运行 `npm run version:set -- rc` 生成上海时间的 `X.Y.Z-rc.YYYYMMDDHHmm`，或用 `npm run version:set -- stable` 去掉 RC 后缀。脚本同步前端、三个 Rust 包、Tauri、npm 主包和平台包；再运行 Cargo 命令更新 Cargo.lock。仅允许 RC 与正式版，Beta / Alpha 会被版本脚本、发布校验和更新清单生成器拒绝。RC 使用 preview 更新入口；正式版本使用 Releases latest 入口，两个通道不互相更新。
 
 - 应用名称：WorkBuddy Switch Next。
 - 应用标识：`io.github.coderdjing.workbuddyswitchnext`。
@@ -37,6 +37,10 @@ npm run build:app:release
 - npm 平台包：`workbuddy-switch-next-<platform>-<arch>`。
 - 主命令：`workbuddy-switch-next`；保留 `workbuddy-switch` 别名，JSON 输出协议及认证锁兼容。
 - 原生 CLI 内部二进制仍为 `wb-switch`；它与 Cargo 包名属于内部构建标识。
+
+## RC 诊断日志
+
+版本的首个预发布标识为 `rc` 时启用诊断（例如 `0.2.0-rc.4`），Beta 和正式版不写入。日志为 `~/.wb-switch/diagnostics/rc-debug.log`，每份最多 1 MiB，保留一份 `.1` 备份。记录启动、IPC 接收/分发与更新检查各阶段，只传递命令名、状态、计数和耗时；禁止记录命令参数、凭据、响应正文、代理地址或原始错误字符串。桌面设置的自动更新区可打开日志位置。
 
 ## 更新签名
 
@@ -55,7 +59,7 @@ Next 使用自己的 Tauri updater 签名。当前机器的签名材料在用户
 
 1. 手动触发可选择 Windows、macOS ARM/Intel、Linux 或全部平台，仅上传构建 artifacts。
 2. 先复用完整三平台 test 工作流作为发布门禁，再检查发布身份与版本；构建后收集 CLI、安装包、签名和平台更新清单。
-3. 版本 tag 必须等于所有包的版本，例如 `v0.2.0-beta.1`。tag 构建四个平台，任一构建失败均不发布 Release。
+3. 按「提交 → push main → 打 tag → push tag」发布。版本 tag 必须等于所有包的版本，例如 `v0.2.0-rc.202611020100`。tag 构建四个平台，任一构建失败均不发布 Release。
 4. 合并清单必须覆盖四种目标与 Linux 两种安装形态；所有清单的版本、下载来源、归档及签名必须一致。
 5. 生成 SHA256SUMS，再发布版本 Release。预览版本另外更新名为 preview 的发布入口。
 

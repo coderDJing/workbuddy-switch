@@ -159,6 +159,11 @@ fn spawn_background_loops(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    modules::rc_diagnostics::record(
+        "app",
+        "startup",
+        serde_json::json!({"os": std::env::consts::OS, "arch": std::env::consts::ARCH}),
+    );
     let mut builder = tauri::Builder::default();
 
     // 单实例互斥必须最先注册：`Builder::build()` 按注册顺序 initialize_plugins，
@@ -213,9 +218,11 @@ pub fn run() {
             if !is_screenshot_demo() {
                 spawn_background_loops(app.handle().clone());
             }
+            modules::rc_diagnostics::record("app", "ready", serde_json::json!({}));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler({
+            let handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
             commands::get_status,
             commands::get_accounts,
             commands::get_codebuddy_cli_status,
@@ -302,6 +309,8 @@ pub fn run() {
             commands::get_github_config,
             commands::save_github_config,
             commands::check_update,
+            commands::record_update_diagnostic,
+            commands::reveal_rc_diagnostics,
             commands::update_state,
             commands::update_download,
             commands::update_restart,
@@ -325,7 +334,23 @@ pub fn run() {
             companion::get_companion_enabled,
             companion::set_companion_enabled,
             companion::open_companion_settings,
-        ])
+            ];
+            move |invoke: tauri::ipc::Invoke<tauri::Wry>| {
+                if !modules::rc_diagnostics::enabled_for_version(modules::update::APP_VERSION) {
+                    return handler(invoke);
+                }
+                let command = invoke.message.command().to_string();
+                let started = std::time::Instant::now();
+                modules::rc_diagnostics::record("ipc", "received", serde_json::json!({"command": command}));
+                let handled = handler(invoke);
+                modules::rc_diagnostics::record(
+                    "ipc",
+                    "dispatched",
+                    serde_json::json!({"command": command, "handled": handled, "elapsedMs": started.elapsed().as_millis()}),
+                );
+                handled
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

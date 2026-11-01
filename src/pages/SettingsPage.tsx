@@ -55,7 +55,7 @@ import type {
   UpdateInfo,
   WebdavRemoteInfo,
 } from "@/lib/types";
-import { GITHUB_RELEASE_URL, GITHUB_REPOSITORY_URL, openReleaseUrl } from "@/lib/update";
+import { GITHUB_RELEASE_URL, GITHUB_REPOSITORY_URL, RC_DIAGNOSTICS_ENABLED, openReleaseUrl } from "@/lib/update";
 import { useUpdateState } from "@/lib/use-update-state";
 import { changeCompanionEnabled, reloadCompanionEnabled, useCompanionEnabled } from "@/lib/use-companion-enabled";
 import { cn } from "@/lib/utils";
@@ -1430,8 +1430,13 @@ function UpdateCard() {
         <div className="flex flex-wrap gap-2 border-b-0 border-border/60 px-4 py-3 sm:px-5">
           <DemoAction><Button size="sm" variant="outline" onClick={check} disabled={checking}>
             {checking ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-            检查更新
+            {checking ? "正在检查…" : "检查更新"}
           </Button></DemoAction>
+          {RC_DIAGNOSTICS_ENABLED && api.isDesktop() && !api.isDemoMode() && (
+            <Button size="sm" variant="ghost" onClick={() => void api.revealRcDiagnostics().catch(() => toast.error("打开 RC 日志位置失败"))}>
+              打开 RC 诊断日志
+            </Button>
+          )}
         </div>
 
         {info?.ok && (
