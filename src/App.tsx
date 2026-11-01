@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
-import { BrowserRouter, HashRouter, Navigate, NavLink, Outlet, Route, Routes } from "react-router-dom";
+import { BrowserRouter, HashRouter, Navigate, NavLink, Outlet, Route, Routes, useNavigate } from "react-router-dom";
 import { ArrowUp, Link2, Loader2, MessagesSquare, Play, Settings, Sparkles, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -11,7 +11,7 @@ import CreditStatsPage from "@/pages/CreditStatsPage";
 import TokenStatsPage from "@/pages/TokenStatsPage";
 import SettingsPage from "@/pages/SettingsPage";
 import QoderPage from "@/pages/QoderPage";
-import { StatusDot, AppIconMark, QoderMark } from "@/components/product-marks";
+import { StatusDot, AppIconMark } from "@/components/product-marks";
 import { CompanionDemoDialog } from "@/components/companion-demo-dialog";
 import { UpdateInstallDialog } from "@/components/update-install-dialog";
 import { Badge } from "@/components/ui/badge";
@@ -24,6 +24,8 @@ import companionTrayIcon from "@/assets/agent-companion-tray.png";
 import { DEMO_UNAVAILABLE_MESSAGE, demoModeEnabled, pagesDemoHostingEnabled } from "@/lib/demo-mode";
 import { useSessionsNavEnabled } from "@/lib/nav-prefs";
 import { useSupportedTools } from "@/lib/supported-tools";
+import { setVendor, useVendor, type Vendor } from "@/lib/vendor";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { changeCompanionEnabled, useCompanionEnabled } from "@/lib/use-companion-enabled";
 import { useCreditAutoRefresh } from "@/lib/use-credit-auto-refresh";
 import { useRotateDeferredNotice } from "@/lib/use-rotate-deferred-notice";
@@ -226,6 +228,13 @@ function Layout() {
     api.isDesktop() && typeof navigator !== "undefined" && navigator.userAgent.includes("Macintosh");
   const sessionsNavEnabled = useSessionsNavEnabled();
   const qoderEnabled = useSupportedTools().qoder;
+  const vendor = useVendor();
+  const navigate = useNavigate();
+  /** 切厂商回到账号管理：当前页（如积分统计）在另一个厂商下可能不存在。 */
+  function changeVendor(next: Vendor) {
+    setVendor(next);
+    navigate("/");
+  }
   useCreditAutoRefresh();
   useWorkbuddyStatusRefresh();
   useRotateDeferredNotice();
@@ -264,6 +273,18 @@ function Layout() {
             )}
           </div>
         </div>
+        {qoderEnabled && (
+          /* 厂商切换放在最顶层：关联会话 / Token 统计 / 积分统计只有腾讯系的数据源，
+             选 Qoder 时下面只留 Qoder 能用的入口。 */
+          <div className="px-1 pb-4">
+            <Tabs value={vendor} onValueChange={(value) => changeVendor(value === "qoder" ? "qoder" : "tencent")}>
+              <TabsList aria-label="厂商" className="w-full">
+                <TabsTrigger value="tencent" className="flex-1">腾讯系</TabsTrigger>
+                <TabsTrigger value="qoder" className="flex-1">Qoder</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+        )}
         <nav className="flex min-h-0 flex-1 flex-col gap-0.5" aria-label="主导航">
           <NavLink
             to="/"
@@ -280,7 +301,7 @@ function Layout() {
             <User className="size-4" />
             账号管理
           </NavLink>
-          {sessionsNavEnabled && (
+          {vendor === "tencent" && sessionsNavEnabled && (
             <NavLink
               to="/sessions"
               className={({ isActive }) =>
@@ -296,36 +317,24 @@ function Layout() {
               关联会话
             </NavLink>
           )}
-          <NavLink to="/token-stats" className={({ isActive }) => cn("flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors", isActive ? "bg-foreground/[0.06] font-medium text-foreground" : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground")}><MessagesSquare className="size-4" />Token 统计</NavLink>
-          <NavLink
-            to="/credit-stats"
-            className={({ isActive }) =>
-              cn(
-                "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
-                isActive
-                  ? "bg-foreground/[0.06] font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-              )
-            }
-          >
-            <Sparkles className="size-4" />
-            积分统计
-          </NavLink>
-          {qoderEnabled && (
-            <NavLink
-              to="/qoder"
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
-                  isActive
-                    ? "bg-foreground/[0.06] font-medium text-foreground"
-                    : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
-                )
-              }
-            >
-              <QoderMark size={16} />
-              Qoder
-            </NavLink>
+          {vendor === "tencent" && (
+            <>
+              <NavLink to="/token-stats" className={({ isActive }) => cn("flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors", isActive ? "bg-foreground/[0.06] font-medium text-foreground" : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground")}><MessagesSquare className="size-4" />Token 统计</NavLink>
+              <NavLink
+                to="/credit-stats"
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50",
+                    isActive
+                      ? "bg-foreground/[0.06] font-medium text-foreground"
+                      : "text-muted-foreground hover:bg-foreground/[0.04] hover:text-foreground",
+                  )
+                }
+              >
+                <Sparkles className="size-4" />
+                积分统计
+              </NavLink>
+            </>
           )}
           <NavLink
             to="/settings"
@@ -356,6 +365,16 @@ function Layout() {
   );
 }
 
+/** 同一路由按当前厂商渲染对应页面（账号管理：腾讯系账号页 / Qoder 账号页）。 */
+function VendorRoute({ tencent, qoder }: { tencent: ReactNode; qoder: ReactNode }) {
+  return <>{useVendor() === "qoder" ? qoder : tencent}</>;
+}
+
+/** 只有腾讯系数据源的页面：Qoder 下直接访问（含旧书签）回到账号管理。 */
+function TencentOnly({ children }: { children: ReactNode }) {
+  return useVendor() === "tencent" ? <>{children}</> : <Navigate to="/" replace />;
+}
+
 export default function App() {
   const Router = pagesDemoHostingEnabled ? HashRouter : BrowserRouter;
 
@@ -364,11 +383,10 @@ export default function App() {
       <Router>
         <Routes>
           <Route element={<Layout />}>
-            <Route path="/" element={<AccountsPage />} />
-            <Route path="/sessions" element={<SessionsPage />} />
-            <Route path="/credit-stats" element={<CreditStatsPage />} />
-            <Route path="/token-stats" element={<TokenStatsPage />} />
-            <Route path="/qoder" element={<QoderPage />} />
+            <Route path="/" element={<VendorRoute tencent={<AccountsPage />} qoder={<QoderPage />} />} />
+            <Route path="/sessions" element={<TencentOnly><SessionsPage /></TencentOnly>} />
+            <Route path="/credit-stats" element={<TencentOnly><CreditStatsPage /></TencentOnly>} />
+            <Route path="/token-stats" element={<TencentOnly><TokenStatsPage /></TencentOnly>} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>

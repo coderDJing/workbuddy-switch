@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
  * 语义（与设置页文案一致）：
  * - 关闭某工具 = 该工具的入口（账号卡片按钮、页顶状态徽标）不渲染，相关状态
  *   轮询也跳过；**不影响账号库与其它工具**，重新打开即恢复。
- * - 默认值：现有的四个端默认开启；JetBrains 与 Qoder 端默认关闭（新增端先灰度）。
+ * - 默认值：JetBrains 端默认关闭（作者要求的灰度策略），其余各端（含 Qoder）默认开启。
  *
  * 持久化在 localStorage（与 `wb-switch.compact` / `wb-switch.theme` 同风格），
  * 键名 `wb-switch.tools.<id>`，值 `"1"` / `"0"`；缺省时取 `defaultEnabled`。
@@ -59,8 +59,8 @@ export const SUPPORTED_TOOLS: ToolDef[] = [
     id: "qoder",
     label: "Qoder CN / Qoder CN CLI",
     description:
-      "Qoder CN 桌面端与 CLI 账号切换（独立账号包，不与 WorkBuddy 账号库共用；侧栏出现「Qoder」页）",
-    defaultEnabled: false,
+      "Qoder CN 桌面端与 CLI 账号切换；侧栏顶部出现「腾讯系 / Qoder」厂商切换（Qoder 账号独立保存，不与腾讯系账号库共用）",
+    defaultEnabled: true,
   },
 ];
 
