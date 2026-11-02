@@ -1,6 +1,6 @@
 {
   "name": "workbuddy-switch-next-win32-x64",
-  "version": "0.2.0-rc.202611020941",
+  "version": "0.2.0-rc.202611020952",
   "description": "workbuddy-switch-next-win32-x64 platform binary",
   "os": [
     "win32"

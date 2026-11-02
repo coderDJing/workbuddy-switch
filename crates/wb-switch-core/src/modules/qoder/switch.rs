@@ -19,6 +19,8 @@ pub struct SwitchOptions {
 }
 
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(20);
+/// 短暂的锁竞争等待结束后再切换，持续占锁时仍拒绝并发操作。
+const SWITCH_LOCK_TIMEOUT: Duration = Duration::from_secs(2);
 /// 已完结的备份保留份数（每个目标各自计）。
 const KEEP_BACKUPS: usize = 10;
 
@@ -193,8 +195,11 @@ pub fn execute(
         }
     }
 
-    let _lock = crate::modules::state_lock::StateLock::try_at(&store.join("switch.lock"))
-        .map_err(|e| e.to_string())?;
+    let _lock = crate::modules::state_lock::StateLock::wait_at(
+        &store.join("switch.lock"),
+        SWITCH_LOCK_TIMEOUT,
+    )
+    .map_err(|e| e.to_string())?;
 
     // 现场登录态还没存成账号包时先认领，避免切走后再也回不去。
     let mut warnings: Vec<String> = Vec::new();

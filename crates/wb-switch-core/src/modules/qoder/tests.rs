@@ -434,3 +434,33 @@ fn backups_are_pruned_per_target() {
     let count = std::fs::read_dir(sb.store.join("backups")).unwrap().count();
     assert_eq!(count, 10);
 }
+
+#[test]
+fn switch_waits_for_brief_lock_contention() {
+    let sb = sandbox();
+    login_desktop(&sb, b"token-a", "Alice", None);
+    let a = store::capture(&sb.store, &sb.roots, QoderTarget::Desktop, None).unwrap();
+    login_desktop(&sb, b"token-b", "Bob", None);
+    let lock_path = sb.store.join("switch.lock");
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let _guard = crate::modules::state_lock::StateLock::try_at(&lock_path).unwrap();
+        ready_tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(150));
+    });
+    ready_rx.recv().unwrap();
+    let result = execute(
+        &sb.store,
+        &sb.roots,
+        &FakeOps::default(),
+        &a.id,
+        OPEN,
+        &no_progress,
+    );
+    holder.join().unwrap();
+    assert!(result.is_ok(), "短暂占锁后应重试: {result:?}");
+    assert_eq!(
+        read(&sb.roots.desktop_dir().join("auth.v1.dat")),
+        b"token-a"
+    );
+}
