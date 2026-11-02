@@ -1,6 +1,8 @@
 import { cn } from "@/lib/utils";
 import workbuddyIcon from "@/assets/workbuddy-official-icon.png";
 import codebuddyCnIdeIcon from "@/assets/codebuddy-cn-ide-icon.png";
+import qoderCnIcon from "@/assets/qoder-cn-official-icon.png";
+import qoderGlobalIcon from "@/assets/qoder-global-official-icon.png";
 
 const appIconUrl = `${import.meta.env.BASE_URL}icon-transparent.png`;
 
@@ -224,18 +226,35 @@ export function StatusDot({ on, className }: { on: boolean; className?: string }
   );
 }
 
-/** Qoder 字标：深色圆角底 + 绿色 Q（与官方配色接近，不复制官方图形）。 */
-export function QoderMark({ size = 32, className }: MarkProps) {
+/** Qoder CN 官方应用图标，提取自 Qoder CN 安装目录的 uninstallerIcon.ico。 */
+export function QoderMark({ size = 32, className, global = false }: MarkProps & { global?: boolean }) {
   return (
     <span
       aria-hidden
-      className={cn(
-        "inline-flex shrink-0 items-center justify-center rounded-[22%] border border-white/10 bg-zinc-950 font-semibold text-emerald-400 shadow-sm",
-        className,
-      )}
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.58), lineHeight: 1 }}
+      className={cn("inline-flex shrink-0", className)}
+      style={{ width: size, height: size }}
     >
-      Q
+      <img src={global ? qoderGlobalIcon : qoderCnIcon} alt="" className="size-full object-contain" />
+    </span>
+  );
+}
+
+/** CLI 沿用 Qoder CN 官方图标，并以角标区分桌面端。 */
+export function QoderCliMark({ size = 32, className, global = false }: MarkProps & { global?: boolean }) {
+  const badge = Math.max(11, Math.round(size * 0.46));
+  return (
+    <span
+      aria-hidden
+      className={cn("relative inline-flex shrink-0", className)}
+      style={{ width: size, height: size }}
+    >
+      <QoderMark size={size} global={global} />
+      <span
+        className="absolute -bottom-0.5 -right-0.5 inline-flex items-center justify-center rounded-full border border-card bg-foreground px-[3px] font-semibold leading-none text-background"
+        style={{ minWidth: badge, height: badge, fontSize: Math.max(6, Math.round(badge * 0.5)) }}
+      >
+        CLI
+      </span>
     </span>
   );
 }

@@ -70,19 +70,21 @@ xattr -rd com.apple.quarantine "/Applications/WorkBuddy Switch Next.app"
 | JetBrains IDE 插件（全家桶 / Android Studio） | ✅ | — | ✅ | — | — |
 | Qoder CN 桌面端 | ✅ | — | ✅ | — | — |
 | Qoder CN CLI | ✅ | — | — | — | — |
+| Qoder 国际版桌面端 | ✅ | — | ✅ | — | — |
+| Qoder 国际版 CLI | ✅ | — | — | — | — |
 
 ✅ 表示支持，— 表示不支持。设置 →「支持工具」可按客户端逐个开启 / 关闭入口；关闭后该端入口与状态轮询一并隐藏，不影响账号库与其它端；JetBrains 端默认关闭，可在设置中随时打开。
 
-### Qoder CN / Qoder CN CLI
+### Qoder 国内版 / 国际版
 
 最左侧平台栏切换「WorkBuddy / CodeBuddy」与「Qoder」，各平台平级、账号库互不相通：WorkBuddy / CodeBuddy 各端（WorkBuddy / CodeBuddy IDE / CodeBuddy CLI / VS Code / JetBrains 插件）共用一个账号库，Qoder 独立管理「账号包」。每个平台只显示它支持的页面：关联会话、Token 统计、积分统计目前只有 WorkBuddy / CodeBuddy 有数据源，Qoder 只有「账号管理」；平台栏底部是全局设置（外观、支持工具、悬浮窗、通知、WebDAV、更新），自动签到、CLI 自动轮换、限额监听与权限检测在 WorkBuddy / CodeBuddy 的「平台设置」里。关闭设置 →「支持工具」里的 Qoder 后，平台栏不再显示 Qoder。
 
-- **认领**：在 Qoder CN（或 CLI）中登录后，在平台栏切到 Qoder，于「账号管理」点「认领 Qoder CN 登录」（或「认领 CLI 登录」），工具把整组加密凭据文件原样保存到 `~/.wb-switch/qoder/`，不解密任何内容。同一账号再次认领会刷新原账号包。
-- **切换**：先把现场凭据整组备份（各端保留最近 10 份），再写入目标账号包，写入后逐份比对 sha256，任何一步失败整组回滚。现场登录态还没认领时会先自动保存，避免切走后回不来。
-- **进程**：Qoder CN 运行中会先关闭、写入后重新打开；Qoder CN CLI 运行中会被关闭，不会自动重开。从 Qoder 内置终端启动本工具时拒绝关闭 Qoder，需先手动退出。
-- **限制**：账号包受 DPAPI（Windows）/ 钥匙串（macOS）绑定，只能在本机当前系统用户下使用，不参与 WebDAV 同步，也不能导出到其它设备；Qoder 会话历史不按账号隔离，切换后不同账号可见同一份本地历史；目前仅支持国内版。
+- **认领**：在 Qoder 国内版或国际版（桌面端或 CLI）中登录后，Qoder 页面会显示检测到的当前登录；点击保存或「认领」后，工具把整组凭据文件原样保存到 `~/.wb-switch/qoder/`，不解密任何内容。四个目标分开保存，相同凭据再次认领会刷新原账号包；凭据变化后可能产生新账号包，不会仅凭显示名覆盖已有账号。
+- **切换**：先把现场凭据整组备份（各端保留最近 10 份），再写入目标账号包，写入后逐份比对 sha256，任何一步失败整组回滚。现场登录态还没认领时会先自动保存；保存失败则取消切换。
+- **进程**：对应桌面端运行中会先关闭、写入后重新打开；CLI 运行中会被关闭，不会自动重开。从 Qoder 内置终端启动本工具时拒绝关闭 Qoder，需先手动退出。
+- **限制**：加密账号包受 DPAPI（Windows）/ 钥匙串（macOS）绑定，只能在本机当前系统用户下使用，不参与 WebDAV 同步，也不能导出到其它设备；Qoder 会话历史不按账号隔离，切换后不同账号可见同一份本地历史。CLI 若没有独立凭据文件，不能认领 CLI 登录。
 
-凭据布局与切换流程参考 [JIUSHIQINGSHAN/qoder-switch](https://github.com/JIUSHIQINGSHAN/qoder-switch)（MIT），代码按本项目结构重写。
+凭据布局与切换流程参考 [NextAgentX/qoder-trae-workbuddy-switch](https://github.com/NextAgentX/qoder-trae-workbuddy-switch) 及 [JIUSHIQINGSHAN/qoder-switch](https://github.com/JIUSHIQINGSHAN/qoder-switch)，代码按本项目结构重写。
 
 CodeBuddy CLI 切换时会先关闭正在运行的 CLI，当前会话会中断且不会自动重开；其余各端可在客户端运行时自动完成切换。
 
@@ -196,7 +198,7 @@ Next 使用独立应用标识，继续读取原来的 `~/.wb-switch` 账号库�
 
 基于 [changexbc/workbuddy-switch](https://github.com/changexbc/workbuddy-switch) 继续维护，感谢原作者及所有社区贡献者。
 
-Qoder 切换的凭据布局与安全流程参考 [JIUSHIQINGSHAN/qoder-switch](https://github.com/JIUSHIQINGSHAN/qoder-switch)（MIT）。
+Qoder 切换的凭据布局与安全流程参考 [NextAgentX/qoder-trae-workbuddy-switch](https://github.com/NextAgentX/qoder-trae-workbuddy-switch) 和 [JIUSHIQINGSHAN/qoder-switch](https://github.com/JIUSHIQINGSHAN/qoder-switch)。
 
 感谢 [Linux.do](https://linux.do) 社区。
 

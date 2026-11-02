@@ -464,7 +464,7 @@ export function getQoderStatus(): Promise<QoderStatus> {
   return call("get_qoder_status");
 }
 
-/** 把 Qoder 现场登录态认领为账号包；同一账号再次认领会刷新而不是重复保存。 */
+/** 把 Qoder 现场登录态认领为账号包；相同凭据再次认领会刷新原包。 */
 export function captureQoderAccount(target: QoderTarget, label?: string): Promise<QoderBundle> {
   return call("capture_qoder_account", { target, label });
 }

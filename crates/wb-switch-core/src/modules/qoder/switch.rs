@@ -57,7 +57,8 @@ fn backup_live(
                     .map_err(|e| format!("备份 {} 失败: {e}", spec.name))?;
                 true
             }
-            Err(_) => false,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+            Err(e) => return Err(format!("备份 {} 失败: {e}", spec.name)),
         };
         items.push(RestoreItem {
             name: spec.name.to_string(),
@@ -97,6 +98,8 @@ fn target_slug(target: QoderTarget) -> &'static str {
     match target {
         QoderTarget::Desktop => "desktop",
         QoderTarget::Cli => "cli",
+        QoderTarget::GlobalDesktop => "global-desktop",
+        QoderTarget::GlobalCli => "global-cli",
     }
 }
 
@@ -167,7 +170,17 @@ pub fn execute(
     let meta = store::load(store, bundle_id)?;
     let target = meta.target;
     let specs = credentials(roots, target);
+    // 账号包只能包含此目标的已知文件，不接受路径或重复项目。
+    let mut names = std::collections::HashSet::new();
+    if meta
+        .files
+        .iter()
+        .any(|f| !specs.iter().any(|s| s.name == f.name) || !names.insert(&f.name))
+    {
+        return Err("账号包包含未知或重复文件，拒绝切换".to_string());
+    }
     let payload = load_payload(store, &meta)?;
+    store::validate_cli_payload(target, &payload)?;
     for spec in specs
         .iter()
         .filter(|s| s.criticality == Criticality::Required)
@@ -190,10 +203,10 @@ pub fn execute(
         && store::current_id(store, roots, target).is_none()
     {
         progress("保存当前登录态…");
-        match store::capture(store, roots, target, None) {
-            Ok(saved) => auto_saved = Some(saved),
-            Err(e) => warnings.push(format!("当前登录态未能自动保存: {e}")),
-        }
+        auto_saved = Some(
+            store::capture(store, roots, target, None)
+                .map_err(|e| format!("当前登录态未能自动保存，已取消切换: {e}"))?,
+        );
     }
     if store::current_id(store, roots, target).as_deref() == Some(meta.id.as_str()) {
         return Ok(json!({
@@ -244,15 +257,18 @@ pub fn execute(
     prune_backups(store, target);
 
     let mut relaunched = false;
-    if was_running && opts.relaunch && target == QoderTarget::Desktop {
-        progress("重新打开 Qoder CN…");
+    if was_running && opts.relaunch && target.is_desktop() {
+        progress(&format!("重新打开 {}…", target.label()));
         match ops.launch(target, running_exe) {
             Ok(()) => relaunched = true,
             Err(e) => warnings.push(e),
         }
     }
-    if was_running && target == QoderTarget::Cli {
-        warnings.push("已关闭运行中的 Qoder CN CLI，请在终端中重新运行".to_string());
+    if was_running && !target.is_desktop() {
+        warnings.push(format!(
+            "已关闭运行中的 {}，请在终端中重新运行",
+            target.label()
+        ));
     }
     progress("切换完成");
     Ok(json!({

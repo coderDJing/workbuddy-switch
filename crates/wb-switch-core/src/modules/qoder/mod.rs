@@ -1,8 +1,8 @@
-//! Qoder CN 桌面端与 Qoder CN CLI 的账号切换。
+//! Qoder 国内版和国际版桌面端与 CLI 的账号切换。
 //!
 //! Qoder 账号与 WorkBuddy / CodeBuddy 账号库互不相通：这里存的是「账号包」
 //! （整组加密凭据文件的副本），不解密、不入 `accounts.json`、不参与 WebDAV 同步。
-//! 思路与凭据布局参考 [JIUSHIQINGSHAN/qoder-switch](https://github.com/JIUSHIQINGSHAN/qoder-switch)（MIT）。
+//! 凭据布局与切换行为参考 NextAgentX/qoder-trae-workbuddy-switch 和 JIUSHIQINGSHAN/qoder-switch。
 pub mod paths;
 pub mod proc;
 pub mod store;
@@ -19,8 +19,8 @@ pub use switch::SwitchOptions;
 fn target_status(roots: &QoderRoots, target: QoderTarget) -> Value {
     let store = store::default_store();
     let installed = match target {
-        QoderTarget::Desktop => roots.desktop_dir().is_dir(),
-        QoderTarget::Cli => roots.cli_dir().is_dir(),
+        QoderTarget::Desktop | QoderTarget::GlobalDesktop => roots.desktop_dir_for(target).is_dir(),
+        QoderTarget::Cli | QoderTarget::GlobalCli => roots.cli_dir_for(target).is_dir(),
     };
     let current_id = store::current_id(&store, roots, target);
     let current_label = current_id
@@ -36,8 +36,8 @@ fn target_status(roots: &QoderRoots, target: QoderTarget) -> Value {
         "currentId": current_id,
         "currentLabel": current_label,
         "echoName": match target {
-            QoderTarget::Desktop => store::read_echo_name(roots),
-            QoderTarget::Cli => None,
+            QoderTarget::Desktop | QoderTarget::GlobalDesktop => store::read_echo_name(roots, target),
+            QoderTarget::Cli | QoderTarget::GlobalCli => None,
         },
     })
 }
@@ -48,6 +48,8 @@ pub fn status() -> Value {
     json!({
         "desktop": target_status(&roots, QoderTarget::Desktop),
         "cli": target_status(&roots, QoderTarget::Cli),
+        "globalDesktop": target_status(&roots, QoderTarget::GlobalDesktop),
+        "globalCli": target_status(&roots, QoderTarget::GlobalCli),
         "bundles": store::list(&store::default_store(), None),
     })
 }

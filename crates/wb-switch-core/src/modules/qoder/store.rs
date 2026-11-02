@@ -97,8 +97,8 @@ pub fn list(store: &Path, target: Option<QoderTarget>) -> Vec<BundleMeta> {
 }
 
 /// 读明文回显里的账号名。只在 `logged_in` 为 true 时采信。
-pub fn read_echo_name(roots: &QoderRoots) -> Option<String> {
-    let raw = std::fs::read_to_string(roots.status_echo()).ok()?;
+pub fn read_echo_name(roots: &QoderRoots, target: QoderTarget) -> Option<String> {
+    let raw = std::fs::read_to_string(roots.status_echo_for(target)).ok()?;
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
     if v.get("logged_in").and_then(|x| x.as_bool()) != Some(true) {
         return None;
@@ -113,7 +113,10 @@ pub fn read_echo_name(roots: &QoderRoots) -> Option<String> {
 /// 现场主凭据的哈希；文件不存在 = 未登录。
 pub fn live_primary_sha(roots: &QoderRoots, target: QoderTarget) -> Option<String> {
     let spec = credentials(roots, target).into_iter().next()?;
-    std::fs::read(&spec.path).ok().map(|b| sha256_hex(&b))
+    std::fs::read(&spec.path)
+        .ok()
+        .filter(|b| !b.is_empty())
+        .map(|b| sha256_hex(&b))
 }
 
 /// 现场对应的账号包 id（按主凭据哈希匹配）。
@@ -125,10 +128,36 @@ pub fn current_id(store: &Path, roots: &QoderRoots, target: QoderTarget) -> Opti
         .map(|m| m.id)
 }
 
+/// CLI 的 user 可能是明文 JSON 或依赖 machine_id 的密文。
+pub(super) fn validate_cli_payload(
+    target: QoderTarget,
+    payload: &[(String, Vec<u8>)],
+) -> Result<(), String> {
+    if target.is_desktop() {
+        return Ok(());
+    }
+    let user = payload
+        .iter()
+        .find(|(name, _)| name == "user")
+        .map(|(_, bytes)| bytes);
+    let plaintext = user
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(bytes).ok())
+        .is_some_and(|value| value.is_object());
+    let has_key = payload
+        .iter()
+        .any(|(name, bytes)| name == "machine_id" && !bytes.is_empty());
+    if !plaintext && !has_key {
+        return Err(format!(
+            "{} 的加密凭据缺少 machine_id，请重新登录",
+            target.label()
+        ));
+    }
+    Ok(())
+}
+
 /// 认领现场登录态为账号包。
 ///
-/// 去重：主凭据哈希相同的包直接刷新；桌面端回显名相同且现场哈希无包匹配时，
-/// 视为同一账号的登录态已刷新，覆盖旧包而不是再存一份。
+/// 只按主凭据哈希去重。显示名不是唯一身份，不能据此覆盖已有账号。
 pub fn capture(
     store: &Path,
     roots: &QoderRoots,
@@ -139,7 +168,15 @@ pub fn capture(
     let mut payload: Vec<(String, Vec<u8>)> = Vec::new();
     for spec in &specs {
         match std::fs::read(&spec.path) {
-            Ok(bytes) => payload.push((spec.name.to_string(), bytes)),
+            Ok(bytes) if !bytes.is_empty() => payload.push((spec.name.to_string(), bytes)),
+            Ok(_) if spec.criticality == Criticality::Required => {
+                return Err(format!(
+                    "{} 登录文件 {} 为空，请先重新登录",
+                    target.label(),
+                    spec.name
+                ));
+            }
+            Ok(_) => {}
             Err(_) if spec.criticality == Criticality::Required => {
                 return Err(format!(
                     "{} 当前未登录（缺少 {}），请先在 {} 中登录后再认领",
@@ -151,21 +188,16 @@ pub fn capture(
             Err(_) => {}
         }
     }
+    validate_cli_payload(target, &payload)?;
     let echo_name = match target {
-        QoderTarget::Desktop => read_echo_name(roots),
-        QoderTarget::Cli => None,
+        QoderTarget::Desktop | QoderTarget::GlobalDesktop => read_echo_name(roots, target),
+        QoderTarget::Cli | QoderTarget::GlobalCli => None,
     };
     let primary = sha256_hex(&payload[0].1);
     let existing = list(store, Some(target));
     let reuse = existing
         .iter()
         .find(|m| m.primary_sha() == Some(primary.as_str()))
-        .or_else(|| {
-            let name = echo_name.as_deref()?;
-            existing
-                .iter()
-                .find(|m| m.echo_name.as_deref() == Some(name))
-        })
         .cloned();
 
     let id = reuse

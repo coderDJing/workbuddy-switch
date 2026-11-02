@@ -1020,6 +1020,8 @@ function demoQoderStatus(): QoderStatus {
   return {
     desktop: { target: "desktop", label: "Qoder CN", installed: true, loggedIn: true, running: true, currentId: "demo-qoder-desktop-a", currentLabel: "工作号", echoName: "演示用户 A" },
     cli: { target: "cli", label: "Qoder CN CLI", installed: true, loggedIn: true, running: false, currentId: "demo-qoder-cli-a", currentLabel: "CLI 主账号", echoName: null },
+    globalDesktop: { target: "global_desktop", label: "Qoder 国际版", installed: true, loggedIn: true, running: false, currentId: null, currentLabel: null, echoName: "演示用户 C" },
+    globalCli: { target: "global_cli", label: "Qoder 国际版 CLI", installed: false, loggedIn: false, running: false, currentId: null, currentLabel: null, echoName: null },
     bundles,
   };
 }

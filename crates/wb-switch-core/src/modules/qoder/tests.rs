@@ -107,6 +107,103 @@ fn capture_requires_login() {
 }
 
 #[test]
+fn four_targets_have_separate_paths_and_saved_accounts() {
+    let sb = sandbox();
+    let targets = [
+        QoderTarget::Desktop,
+        QoderTarget::Cli,
+        QoderTarget::GlobalDesktop,
+        QoderTarget::GlobalCli,
+    ];
+    let mut primary_paths = Vec::new();
+    for target in targets {
+        let specs = super::paths::credentials(&sb.roots, target);
+        for spec in &specs {
+            if spec.criticality == super::paths::Criticality::Required {
+                put(&spec.path, b"same-login-bytes");
+            }
+        }
+        if !target.is_desktop() {
+            put(
+                &sb.roots
+                    .cli_dir_for(target)
+                    .join(".auth")
+                    .join("machine_id"),
+                b"machine",
+            );
+        }
+        primary_paths.push(specs[0].path.clone());
+        store::capture(&sb.store, &sb.roots, target, None).unwrap();
+    }
+    let unique: std::collections::HashSet<_> = primary_paths.iter().collect();
+    assert_eq!(unique.len(), 4);
+    assert_eq!(
+        store::list(&sb.store, None).len(),
+        4,
+        "相同密文也不能跨目标合并"
+    );
+    for target in targets {
+        assert!(store::current_id(&sb.store, &sb.roots, target).is_some());
+    }
+}
+
+#[test]
+fn global_switch_does_not_touch_cn_credentials() {
+    let sb = sandbox();
+    let cn_specs = super::paths::credentials(&sb.roots, QoderTarget::Desktop);
+    for spec in &cn_specs {
+        if spec.criticality == super::paths::Criticality::Required {
+            put(&spec.path, b"cn");
+        }
+    }
+    let global_specs = super::paths::credentials(&sb.roots, QoderTarget::GlobalDesktop);
+    for spec in &global_specs {
+        if spec.criticality == super::paths::Criticality::Required {
+            put(&spec.path, b"global-a");
+        }
+    }
+    let a = store::capture(&sb.store, &sb.roots, QoderTarget::GlobalDesktop, None).unwrap();
+    put(&global_specs[0].path, b"global-b");
+    let ops = FakeOps::default();
+    execute(&sb.store, &sb.roots, &ops, &a.id, OPEN, &no_progress).unwrap();
+    assert_eq!(read(&global_specs[0].path), b"global-a");
+    assert_eq!(read(&cn_specs[0].path), b"cn");
+    assert_eq!(
+        store::list(&sb.store, Some(QoderTarget::GlobalDesktop)).len(),
+        2
+    );
+}
+
+#[test]
+fn empty_credentials_are_not_treated_as_a_login() {
+    let sb = sandbox();
+    let specs = super::paths::credentials(&sb.roots, QoderTarget::GlobalCli);
+    put(&specs[0].path, b"");
+    put(&specs[1].path, b"machine");
+    assert!(store::live_primary_sha(&sb.roots, QoderTarget::GlobalCli).is_none());
+    assert!(store::capture(&sb.store, &sb.roots, QoderTarget::GlobalCli, None).is_err());
+}
+
+#[test]
+fn plaintext_cli_login_does_not_require_a_machine_key() {
+    let sb = sandbox();
+    let specs = super::paths::credentials(&sb.roots, QoderTarget::GlobalCli);
+    put(&specs[0].path, br#"{"user":{"id":"test"}}"#);
+    let a = store::capture(&sb.store, &sb.roots, QoderTarget::GlobalCli, None).unwrap();
+    put(&specs[0].path, br#"{"user":{"id":"other"}}"#);
+    execute(
+        &sb.store,
+        &sb.roots,
+        &FakeOps::default(),
+        &a.id,
+        OPEN,
+        &no_progress,
+    )
+    .unwrap();
+    assert_eq!(read(&specs[0].path), br#"{"user":{"id":"test"}}"#);
+}
+
+#[test]
 fn capture_labels_from_echo_and_dedups_by_hash() {
     let sb = sandbox();
     login_desktop(&sb, b"token-a", "Alice", None);
@@ -122,18 +219,35 @@ fn capture_labels_from_echo_and_dedups_by_hash() {
 }
 
 #[test]
-fn capture_refreshes_same_echo_name_instead_of_duplicating() {
+fn capture_does_not_merge_distinct_credentials_with_same_echo_name() {
     let sb = sandbox();
     login_desktop(&sb, b"token-a1", "Alice", None);
     let first = store::capture(&sb.store, &sb.roots, QoderTarget::Desktop, Some("工作号")).unwrap();
     login_desktop(&sb, b"token-a2", "Alice", None);
     let second = store::capture(&sb.store, &sb.roots, QoderTarget::Desktop, None).unwrap();
-    assert_eq!(first.id, second.id);
-    assert_eq!(second.label, "工作号", "刷新不应覆盖用户起的名字");
+    assert_ne!(first.id, second.id);
+    assert_eq!(store::list(&sb.store, None).len(), 2);
+    assert_eq!(store::load(&sb.store, &first.id).unwrap().label, "工作号");
     assert_eq!(
         second.primary_sha(),
         Some(store::sha256_hex(b"token-a2").as_str())
     );
+}
+
+#[test]
+fn switch_stops_if_current_login_cannot_be_saved() {
+    let sb = sandbox();
+    let dir = sb.roots.cli_dir().join(".auth");
+    put(&dir.join("user"), b"token-a");
+    put(&dir.join("machine_id"), b"machine");
+    let a = store::capture(&sb.store, &sb.roots, QoderTarget::Cli, None).unwrap();
+    put(&dir.join("user"), b"token-b");
+    std::fs::remove_file(dir.join("machine_id")).unwrap();
+    let ops = FakeOps::default();
+    let err = execute(&sb.store, &sb.roots, &ops, &a.id, OPEN, &no_progress).unwrap_err();
+    assert!(err.contains("已取消切换"));
+    assert_eq!(read(&dir.join("user")), b"token-b");
+    assert_eq!(ops.closed.get(), 0);
 }
 
 #[test]

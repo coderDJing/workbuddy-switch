@@ -1,4 +1,4 @@
-//! Qoder CN 的凭据文件布局（2026-11 在 Windows 本机核对）。
+//! Qoder 国内版与国际版的凭据文件布局。
 //!
 //! 新版 Qoder CN 桌面端是独立 Electron 应用（不再是 VS Code 分支，没有
 //! `state.vscdb`），登录态由 safeStorage 加密：
@@ -18,6 +18,10 @@ use serde::{Deserialize, Serialize};
 pub enum QoderTarget {
     Desktop,
     Cli,
+    #[serde(rename = "global_desktop")]
+    GlobalDesktop,
+    #[serde(rename = "global_cli")]
+    GlobalCli,
 }
 
 impl QoderTarget {
@@ -25,6 +29,8 @@ impl QoderTarget {
         match self {
             Self::Desktop => "Qoder CN",
             Self::Cli => "Qoder CN CLI",
+            Self::GlobalDesktop => "Qoder 国际版",
+            Self::GlobalCli => "Qoder 国际版 CLI",
         }
     }
 
@@ -32,8 +38,18 @@ impl QoderTarget {
         match raw.trim().to_ascii_lowercase().as_str() {
             "desktop" => Some(Self::Desktop),
             "cli" => Some(Self::Cli),
+            "global_desktop" => Some(Self::GlobalDesktop),
+            "global_cli" => Some(Self::GlobalCli),
             _ => None,
         }
+    }
+
+    pub fn is_desktop(self) -> bool {
+        matches!(self, Self::Desktop | Self::GlobalDesktop)
+    }
+
+    pub fn is_global(self) -> bool {
+        matches!(self, Self::GlobalDesktop | Self::GlobalCli)
     }
 }
 
@@ -91,6 +107,26 @@ impl QoderRoots {
     pub fn status_echo(&self) -> PathBuf {
         self.cli_dir().join(".qoder-app-status.json")
     }
+
+    pub fn desktop_dir_for(&self, target: QoderTarget) -> PathBuf {
+        if target.is_global() {
+            self.app_data.join("com.qoder.app.stable")
+        } else {
+            self.desktop_dir()
+        }
+    }
+
+    pub fn cli_dir_for(&self, target: QoderTarget) -> PathBuf {
+        if target.is_global() {
+            self.home.join(".qoder")
+        } else {
+            self.cli_dir()
+        }
+    }
+
+    pub fn status_echo_for(&self, target: QoderTarget) -> PathBuf {
+        self.cli_dir_for(target).join(".qoder-app-status.json")
+    }
 }
 
 /// 目标的凭据清单。第一项是主凭据：它的哈希用来识别「当前是哪个账号包」。
@@ -101,8 +137,8 @@ pub fn credentials(roots: &QoderRoots, target: QoderTarget) -> Vec<CredentialSpe
         criticality,
     };
     match target {
-        QoderTarget::Desktop => {
-            let dir = roots.desktop_dir();
+        QoderTarget::Desktop | QoderTarget::GlobalDesktop => {
+            let dir = roots.desktop_dir_for(target);
             // macOS 的主密钥在钥匙串里，Local State 只有 uninstall_metrics。
             let local_state = if cfg!(target_os = "macos") {
                 Criticality::Optional
@@ -134,17 +170,17 @@ pub fn credentials(roots: &QoderRoots, target: QoderTarget) -> Vec<CredentialSpe
                 // 回显随账号走，否则换号后界面仍显示上一个账号的名字。
                 spec(
                     ".qoder-app-status.json",
-                    roots.status_echo(),
+                    roots.status_echo_for(target),
                     Criticality::Paired,
                 ),
             ]
         }
-        QoderTarget::Cli => {
-            let auth = roots.cli_dir().join(".auth");
+        QoderTarget::Cli | QoderTarget::GlobalCli => {
+            let auth = roots.cli_dir_for(target).join(".auth");
             vec![
                 spec("user", auth.join("user"), Criticality::Required),
-                // CLI 凭据的解密密钥，必须与 user 成组。
-                spec("machine_id", auth.join("machine_id"), Criticality::Required),
+                // 密文需要此密钥；明文 JSON 不需要，见 store 的成组校验。
+                spec("machine_id", auth.join("machine_id"), Criticality::Optional),
             ]
         }
     }
@@ -167,19 +203,38 @@ pub fn process_images(target: QoderTarget) -> &'static [&'static str] {
                 &["qoderclicn"]
             }
         }
+        QoderTarget::GlobalDesktop => {
+            if cfg!(target_os = "windows") {
+                &["Qoder.exe"]
+            } else {
+                &["Qoder"]
+            }
+        }
+        QoderTarget::GlobalCli => {
+            if cfg!(target_os = "windows") {
+                &["qodercli.exe"]
+            } else {
+                &["qodercli"]
+            }
+        }
     }
 }
 
 /// 桌面端的默认安装位置，供「切换后重新打开」使用。
-pub fn desktop_default_exe(roots: &QoderRoots) -> Option<PathBuf> {
+pub fn desktop_default_exe(roots: &QoderRoots, target: QoderTarget) -> Option<PathBuf> {
+    let name = if target.is_global() {
+        "Qoder"
+    } else {
+        "Qoder CN"
+    };
     let candidates: Vec<PathBuf> = if cfg!(target_os = "windows") {
         dirs::data_local_dir()
-            .map(|d| vec![d.join("Programs").join("Qoder CN").join("Qoder CN.exe")])
+            .map(|d| vec![d.join("Programs").join(name).join(format!("{name}.exe"))])
             .unwrap_or_default()
     } else if cfg!(target_os = "macos") {
         vec![
-            PathBuf::from("/Applications/Qoder CN.app"),
-            roots.home.join("Applications").join("Qoder CN.app"),
+            PathBuf::from("/Applications").join(format!("{name}.app")),
+            roots.home.join("Applications").join(format!("{name}.app")),
         ]
     } else {
         Vec::new()

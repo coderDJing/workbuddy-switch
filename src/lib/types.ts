@@ -1138,8 +1138,8 @@ export interface VscodeSessionList {
   dataRoot?: string | null;
 }
 
-/** Qoder 切换目标：桌面端（Qoder CN）与 CLI（qoderclicn）登录态相互独立。 */
-export type QoderTarget = "desktop" | "cli";
+/** 国内 / 国际版的桌面端和 CLI 使用四套独立登录态。 */
+export type QoderTarget = "desktop" | "cli" | "global_desktop" | "global_cli";
 
 /** Qoder 账号包：整组加密凭据文件的本机副本（只含元数据，不含凭据内容）。 */
 export interface QoderBundle {
@@ -1168,6 +1168,8 @@ export interface QoderTargetStatus {
 export interface QoderStatus {
   desktop: QoderTargetStatus;
   cli: QoderTargetStatus;
+  globalDesktop: QoderTargetStatus;
+  globalCli: QoderTargetStatus;
   bundles: QoderBundle[];
 }
 

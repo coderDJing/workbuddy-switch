@@ -46,7 +46,26 @@ fn macos_patterns(target: QoderTarget) -> Vec<String> {
     match target {
         QoderTarget::Desktop => vec!["Qoder CN.app/Contents/MacOS".to_string()],
         QoderTarget::Cli => vec!["/qoderclicn".to_string()],
+        QoderTarget::GlobalDesktop => vec!["Qoder.app/Contents/MacOS".to_string()],
+        QoderTarget::GlobalCli => vec!["/qodercli".to_string()],
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_rows(target: QoderTarget) -> Vec<(u32, String)> {
+    process::macos_rows_by_patterns(&macos_patterns(target))
+        .into_iter()
+        .filter(|(_, args)| {
+            if target != QoderTarget::GlobalCli {
+                return true;
+            }
+            args.match_indices("/qodercli").any(|(i, matched)| {
+                args.as_bytes()
+                    .get(i + matched.len())
+                    .is_none_or(|c| c.is_ascii_whitespace() || *c == b'\"' || *c == b'\'')
+            })
+        })
+        .collect()
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -73,7 +92,7 @@ impl QoderProcessOps for RealProcessOps {
         }
         #[cfg(target_os = "macos")]
         {
-            process::macos_pids_by_patterns(&macos_patterns(target))
+            macos_rows(target).into_iter().map(|(pid, _)| pid).collect()
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
@@ -101,7 +120,7 @@ impl QoderProcessOps for RealProcessOps {
         }
         #[cfg(target_os = "macos")]
         {
-            process::macos_rows_by_patterns(&macos_patterns(target))
+            macos_rows(target)
                 .into_iter()
                 .find_map(|(_, args)| process::extract_app_bundle_from_args(&args))
         }
@@ -166,12 +185,15 @@ impl QoderProcessOps for RealProcessOps {
     }
 
     fn launch(&self, target: QoderTarget, exe: Option<PathBuf>) -> Result<(), String> {
-        if target == QoderTarget::Cli {
-            return Err("Qoder CN CLI 不支持自动重开，请在终端中重新运行".to_string());
+        if !target.is_desktop() {
+            return Err(format!(
+                "{} 不支持自动重开，请在终端中重新运行",
+                target.label()
+            ));
         }
         let exe = exe
-            .or_else(|| super::paths::desktop_default_exe(&QoderRoots::real()))
-            .ok_or_else(|| "未找到 Qoder CN 程序，请手动打开 Qoder CN".to_string())?;
+            .or_else(|| super::paths::desktop_default_exe(&QoderRoots::real(), target))
+            .ok_or_else(|| format!("未找到 {} 程序，请手动打开", target.label()))?;
         let mut cmd = if cfg!(target_os = "macos") {
             let mut c = process::cmd_builder("open");
             c.arg("-a").arg(&exe);
@@ -183,7 +205,13 @@ impl QoderProcessOps for RealProcessOps {
             .stderr(std::process::Stdio::null())
             .spawn()
             .map(|_| ())
-            .map_err(|e| format!("启动 Qoder CN 失败: {e}（路径: {}）", exe.display()))
+            .map_err(|e| {
+                format!(
+                    "启动 {} 失败: {e}（路径: {}）",
+                    target.label(),
+                    exe.display()
+                )
+            })
     }
 
     fn hosted_by(&self, _target: QoderTarget) -> bool {

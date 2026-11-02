@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Loader2, Pencil, RefreshCw, Terminal, Trash2 } from "lucide-react";
+import { Check, Loader2, Pencil, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -16,14 +16,18 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { DemoAction } from "@/components/demo-action";
-import { QoderMark } from "@/components/product-marks";
+import { QoderCliMark, QoderMark } from "@/components/product-marks";
 import * as api from "@/lib/api";
 import type { QoderBundle, QoderStatus, QoderTarget, QoderTargetStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Pending = { kind: "switch" | "delete"; bundle: QoderBundle };
 
-const TARGETS: QoderTarget[] = ["desktop", "cli"];
+const TARGETS: QoderTarget[] = ["desktop", "cli", "global_desktop", "global_cli"];
+const TARGET_LABELS: Record<QoderTarget, string> = {
+  desktop: "Qoder CN", cli: "Qoder CN CLI", global_desktop: "Qoder 国际版", global_cli: "Qoder 国际版 CLI",
+};
+const isCli = (target: QoderTarget) => target === "cli" || target === "global_cli";
 
 function formatTime(ms?: number | null): string {
   if (!ms) return "—";
@@ -37,21 +41,12 @@ function stateText(s: QoderTargetStatus | undefined): string {
 }
 
 function TargetMark({ target, size }: { target: QoderTarget; size: number }) {
-  if (target === "desktop") return <QoderMark size={size} />;
-  return (
-    <span
-      aria-hidden
-      className="inline-flex shrink-0 items-center justify-center rounded-[22%] border border-white/10 bg-zinc-950 text-emerald-400 shadow-sm"
-      style={{ width: size, height: size }}
-    >
-      <Terminal style={{ width: size * 0.56, height: size * 0.56 }} />
-    </span>
-  );
+  const global = target === "global_desktop" || target === "global_cli";
+  return isCli(target) ? <QoderCliMark size={size} global={global} /> : <QoderMark size={size} global={global} />;
 }
 
 /** 页顶状态徽标：与 WorkBuddy / CodeBuddy 各端同一套样式（接入 = 品牌色描边，未接入 = 灰）。 */
-function HeaderBadge({ status }: { status: QoderTargetStatus | undefined }) {
-  const target = status?.target ?? "desktop";
+function HeaderBadge({ target, status }: { target: QoderTarget; status: QoderTargetStatus | undefined }) {
   return (
     <span className="group relative inline-flex cursor-default">
       <span
@@ -64,7 +59,7 @@ function HeaderBadge({ status }: { status: QoderTargetStatus | undefined }) {
         <TargetMark target={target} size={28} />
       </span>
       <span className="pointer-events-none absolute right-0 top-full z-50 mt-2 hidden whitespace-nowrap rounded-md bg-popover px-2.5 py-1.5 text-xs text-popover-foreground shadow-lg ring-1 ring-black/5 group-hover:block">
-        {status?.label ?? (target === "desktop" ? "Qoder CN" : "Qoder CN CLI")}：{stateText(status)} · 当前账号：
+        {status?.label ?? TARGET_LABELS[target]}：{stateText(status)} · 当前账号：
         {status?.currentLabel ?? (status?.loggedIn ? "未认领" : "未登录")}
       </span>
     </span>
@@ -89,7 +84,7 @@ interface CardProps {
 
 /** Qoder 账号卡片：外观与 WorkBuddy / CodeBuddy 账号卡片一致（圆角卡片、header 标识、footer 操作）。 */
 function QoderAccountCard({ bundle, active, busy, switching, editing, draft, onDraftChange, onStartRename, onCommitRename, onCancelRename, onSwitch, onDelete }: CardProps) {
-  const targetLabel = bundle.target === "desktop" ? "Qoder CN" : "Qoder CN CLI";
+  const targetLabel = TARGET_LABELS[bundle.target];
   return (
     <article
       className={cn(
@@ -158,6 +153,32 @@ function QoderAccountCard({ bundle, active, busy, switching, editing, draft, onD
   );
 }
 
+/** 本机已登录但尚未保存的账号，也应出现在账号列表中。 */
+function CurrentLoginCard({ status, busy, saving, onSave }: { status: QoderTargetStatus; busy: boolean; saving: boolean; onSave: () => void }) {
+  return (
+    <article className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-primary/50 bg-card shadow-sm">
+      <header className="flex items-center gap-3 border-b border-border bg-primary/[0.06] px-5 py-4">
+        <TargetMark target={status.target} size={32} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-semibold">{status.echoName || "当前登录"}</div>
+          <div className="truncate text-xs text-muted-foreground">{status.label}</div>
+        </div>
+        <Badge variant="secondary" className="shrink-0 gap-1"><Check className="size-3" />当前</Badge>
+      </header>
+      <div className="flex-1 px-5 py-4 text-xs leading-5 text-muted-foreground">
+        已检测到本机登录，保存后可在切换账号时随时切回。
+      </div>
+      <footer className="border-t border-border px-5 py-3">
+        <DemoAction>
+          <Button size="sm" className="h-7 rounded-full px-3 text-xs" disabled={busy} onClick={onSave}>
+            {saving && <Loader2 className="animate-spin" />}保存当前登录
+          </Button>
+        </DemoAction>
+      </footer>
+    </article>
+  );
+}
+
 interface Props {
   compact?: boolean;
 }
@@ -187,6 +208,8 @@ export function QoderAccountsView({ compact = false }: Props) {
 
   useEffect(() => {
     void refresh();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
   }, [refresh]);
 
   async function run<T>(key: string, action: () => Promise<T>, onOk: (v: T) => void, failTitle: string) {
@@ -211,7 +234,7 @@ export function QoderAccountsView({ compact = false }: Props) {
         toast.info(r.message ?? "已是该账号");
         return;
       }
-      const notes = [r.autoSavedId ? "原登录态已自动保存为账号" : null, r.relaunched ? "已重新打开 Qoder CN" : null, ...(r.warnings ?? [])].filter(Boolean);
+      const notes = [r.autoSavedId ? "原登录态已自动保存为账号" : null, r.relaunched ? `已重新打开 ${TARGET_LABELS[bundle.target]}` : null, ...(r.warnings ?? [])].filter(Boolean);
       toast.success(`已切换到 ${bundle.label}`, { description: notes.join("；") || undefined });
     }, "切换失败");
   }
@@ -224,7 +247,8 @@ export function QoderAccountsView({ compact = false }: Props) {
   }
 
   function targetStatus(target: QoderTarget) {
-    return target === "desktop" ? status?.desktop : status?.cli;
+    if (!status) return undefined;
+    return { desktop: status.desktop, cli: status.cli, global_desktop: status.globalDesktop, global_cli: status.globalCli }[target];
   }
 
   /** 目标运行中才需要确认（会被关闭）；未运行直接切。 */
@@ -234,6 +258,8 @@ export function QoderAccountsView({ compact = false }: Props) {
   }
 
   const bundles = status?.bundles ?? [];
+  const currentLogins = TARGETS.map(targetStatus).filter((s): s is QoderTargetStatus => Boolean(s?.loggedIn && !s.currentId));
+  const accountCount = bundles.length + currentLogins.length;
   const busy = busyKey !== null;
 
   return (
@@ -243,12 +269,11 @@ export function QoderAccountsView({ compact = false }: Props) {
           <div className="min-w-0">
             <h1 className="text-[28px] font-semibold tracking-tight">Qoder 账号管理</h1>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              管理 Qoder CN 桌面端与 Qoder CN CLI 账号，两端各自独立切换。
+              管理国内版和国际版的桌面端及 CLI 账号，各端独立切换。
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2.5 pt-1">
-            <HeaderBadge status={status?.desktop} />
-            <HeaderBadge status={status?.cli} />
+            {TARGETS.map((target) => <HeaderBadge key={target} target={target} status={targetStatus(target)} />)}
           </div>
         </div>
       </header>
@@ -258,7 +283,7 @@ export function QoderAccountsView({ compact = false }: Props) {
           <div className="min-w-[190px] flex-1">
             <h2 className="text-sm font-semibold text-foreground">添加账号</h2>
             <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              在 Qoder 中登录后认领当前登录；换另一个账号登录再认领一次，即可一键切换。同一账号再次认领会刷新原账号。
+              在 Qoder 中登录后保存当前登录；换另一个账号登录再保存，即可一键切换。凭据发生变化时可能需要重新保存。
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2.5">
@@ -275,7 +300,7 @@ export function QoderAccountsView({ compact = false }: Props) {
                     onClick={() => capture(target)}
                   >
                     {busyKey === `capture:${target}` ? <Loader2 className="animate-spin" /> : <RefreshCw />}
-                    认领 {target === "desktop" ? "Qoder CN" : "CLI"} 登录
+                    认领 {TARGET_LABELS[target]} 登录
                   </Button>
                 </DemoAction>
               );
@@ -292,9 +317,9 @@ export function QoderAccountsView({ compact = false }: Props) {
           <Badge
             variant="secondary"
             className="h-6 min-w-6 rounded-full border-0 px-1.5 text-[11px] tabular-nums text-muted-foreground shadow-none"
-            aria-label={`${bundles.length} 个 Qoder 账号`}
+            aria-label={`${accountCount} 个 Qoder 账号`}
           >
-            {bundles.length}
+            {accountCount}
           </Badge>
         </div>
         {!status && !loadError ? (
@@ -302,15 +327,18 @@ export function QoderAccountsView({ compact = false }: Props) {
             <Loader2 className="animate-spin" />
             加载账号…
           </div>
-        ) : bundles.length === 0 ? (
+        ) : accountCount === 0 ? (
           <div className="rounded-xl border border-dashed px-4 py-16 text-center text-sm text-muted-foreground">
             <p>暂无 Qoder 账号。</p>
             <p className="mt-2 text-xs leading-5">
-              在 Qoder CN 或 Qoder CN CLI 中登录后，点击上方「认领」保存；本机当前登录的账号也请认领，以便随时切回。
+              在 Qoder 国内版或国际版中登录后，点击上方「认领」保存，以便随时切回。
             </p>
           </div>
         ) : (
           <div className={cn("grid min-w-0 gap-5", compact ? "grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]" : "grid-cols-[repeat(auto-fit,minmax(min(100%,340px),1fr))]")}>
+            {currentLogins.map((s) => (
+              <CurrentLoginCard key={s.target} status={s} busy={busy} saving={busyKey === `capture:${s.target}`} onSave={() => capture(s.target)} />
+            ))}
             {bundles.map((bundle) => (
               <QoderAccountCard
                 key={bundle.id}
@@ -334,7 +362,7 @@ export function QoderAccountsView({ compact = false }: Props) {
           </div>
         )}
         <p className="mt-5 text-xs leading-5 text-muted-foreground">
-          账号是本机加密凭据的副本，只能在本机当前系统用户下使用，不参与 WebDAV 同步；Qoder 的会话历史不按账号隔离，切换后不同账号会看到同一份本地历史。
+          账号保存为本机凭据副本，不参与 WebDAV 同步；Qoder 的会话历史不按账号隔离，切换后不同账号会看到同一份本地历史。
         </p>
       </section>
 
@@ -347,9 +375,9 @@ export function QoderAccountsView({ compact = false }: Props) {
             <AlertDialogDescription>
               {pending?.kind === "delete"
                 ? "只删除本工具保存的凭据副本，不影响 Qoder 当前登录。删除后需重新登录该账号并认领才能再切回。"
-                : pending?.bundle.target === "cli"
-                  ? "Qoder CN CLI 正在运行，切换会关闭它，当前 CLI 会话会中断且不会自动重开。"
-                  : "Qoder CN 正在运行，切换时会先关闭它，写入完成后自动重新打开。"}
+                : pending && isCli(pending.bundle.target)
+                  ? `${TARGET_LABELS[pending.bundle.target]} 正在运行，切换会关闭它，当前 CLI 会话会中断且不会自动重开。`
+                  : `${pending ? TARGET_LABELS[pending.bundle.target] : "Qoder"} 正在运行，切换时会先关闭它，写入完成后自动重新打开。`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

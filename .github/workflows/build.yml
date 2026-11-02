@@ -186,3 +186,6 @@ jobs:
             gh release create preview artifacts/* --target "$GITHUB_SHA" --title "WorkBuddy Switch Next — 预览版" \
               --notes-file "docs/releases/$RELEASE_VERSION.md" --prerelease --latest=false
           fi
+      - name: Remove superseded RC releases and preview assets
+        if: needs.select-matrix.outputs.preview == 'true'
+        run: node scripts/cleanup-rc-releases.mjs

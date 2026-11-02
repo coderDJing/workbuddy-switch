@@ -1,6 +1,6 @@
 [package]
 name = "wb-switch-rust"
-version = "0.2.0-rc.202611020103"
+version = "0.2.0-rc.202611020941"
 description = "WorkBuddy Switch Next —— 桌面与 CLI 多账号管理工具"
 authors = ["apple"]
 edition = "2021"

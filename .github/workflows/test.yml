@@ -159,7 +159,7 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run release:check
-      - run: node --test scripts/vendor-agent-companion.test.mjs scripts/release-artifacts.test.mjs scripts/release-policy.test.mjs
+      - run: node --test scripts/vendor-agent-companion.test.mjs scripts/release-artifacts.test.mjs scripts/release-policy.test.mjs scripts/cleanup-rc-releases.test.mjs
 
       - name: Companion frontend checks
         working-directory: vendor/agent-companion
